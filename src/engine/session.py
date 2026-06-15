@@ -16,6 +16,7 @@ from src.engine.tool_executor import execute_tool_call
 from src.engine.memory.hermes_store import HermesStore
 from src.engine.memory.compressor import should_compress, compress_messages, estimate_tokens
 from src.engine.report_indexer import index_all_reports
+from src.safety.disk_guard import DiskGuard
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ async def run_session(
     # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
+    disk_guard = DiskGuard(temp_dir, settings.session_disk_limit_gb)
     client = DeepSeekClient(settings)
     messages: list[dict] = []
     status_marker = None
@@ -111,8 +113,9 @@ async def run_session(
                 final_status = "error"
                 break
 
-            if _check_disk_quota(temp_dir, settings.session_disk_limit_gb):
-                logger.warning(f"会话 {session_id} 磁盘配额超限")
+            over, usage = disk_guard.check_quota()
+            if over:
+                logger.warning("会话 %s 磁盘配额超限: %d bytes", session_id, usage)
                 await update_session_status(db, session_id, "error", "磁盘配额超限")
                 status_marker = None
                 final_status = "error"
@@ -243,13 +246,6 @@ async def run_session(
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
-
-def _check_disk_quota(temp_dir: Path, limit_gb: int) -> bool:
-    if not temp_dir.exists():
-        return False
-    total = sum(f.stat().st_size for f in temp_dir.rglob("*") if f.is_file())
-    return total > limit_gb * 1024 * 1024 * 1024
-
 
 def _determine_status(marker: str | None, report_dir: Path, session_id: str) -> str:
     has_report = False

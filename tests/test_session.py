@@ -1,5 +1,6 @@
 from pathlib import Path
-from src.engine.session import detect_status_marker, _determine_status, _check_disk_quota
+from src.engine.session import detect_status_marker, _determine_status
+from src.safety.disk_guard import DiskGuard
 
 
 def test_detect_vuln_found():
@@ -50,9 +51,27 @@ def test_determine_status_no_marker_has_report(tmp_path):
     assert result == "vuln_found"
 
 
-def test_check_disk_quota_under_limit(tmp_path):
+def test_disk_guard_under_limit(tmp_path):
     (tmp_path / "small.txt").write_text("small")
-    assert not _check_disk_quota(tmp_path, 5)
+    guard = DiskGuard(tmp_path, quota_gb=5)
+    over, size = guard.check_quota()
+    assert not over
+    assert size > 0
+
+
+def test_disk_guard_write_path_blocks_system():
+    guard = DiskGuard(Path("/tmp/test"), quota_gb=1)
+    ok, reason = guard.check_write_path(Path("C:/Windows/System32/test.dll"))
+    assert not ok
+    assert "禁止写入系统目录" in reason
+
+
+def test_disk_guard_write_path_allows_session_dir(tmp_path):
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    guard = DiskGuard(session_dir, quota_gb=1)
+    ok, _ = guard.check_write_path(session_dir / "output.txt")
+    assert ok
 
 
 def test_determine_status_no_marker_no_report(tmp_path):
