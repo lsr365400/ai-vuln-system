@@ -111,9 +111,16 @@ class DeepSeekClient:
             *messages,
         ]
 
+        # Strip reasoning_content from passed-in messages for API compatibility
+        # (it's only needed in the immediate next turn, not across all turns)
+        clean_messages = []
+        for m in full_messages:
+            clean = {k: v for k, v in m.items() if k != "reasoning_content"}
+            clean_messages.append(clean)
+
         stream = await self.client.chat.completions.create(
             model=self.model,
-            messages=full_messages,
+            messages=clean_messages,
             tools=TOOLS,
             tool_choice="auto",
             max_tokens=max_tokens,
@@ -121,11 +128,16 @@ class DeepSeekClient:
         )
 
         tool_call_buffer: dict[int, dict] = {}
+        reasoning_buffer = ""  # Accumulate reasoning_content from chunks
         finish_reason = None
 
         async for chunk in stream:
             delta = chunk.choices[0].delta
             finish_reason = chunk.choices[0].finish_reason
+
+            # Accumulate reasoning_content (DeepSeek thinking mode)
+            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                reasoning_buffer += delta.reasoning_content
 
             if delta.content:
                 yield {"type": "text", "content": delta.content}
@@ -152,10 +164,15 @@ class DeepSeekClient:
                     tc["function"]["arguments_parsed"] = json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     tc["function"]["arguments_parsed"] = {}
-                yield {"type": "tool_call", "tool_call": tc}
+                # Attach reasoning_content to tool_call for DeepSeek thinking mode
+                yield {
+                    "type": "tool_call",
+                    "tool_call": tc,
+                    "reasoning_content": reasoning_buffer,
+                }
 
         if finish_reason == "stop":
-            yield {"type": "finish", "reason": "stop"}
+            yield {"type": "finish", "reason": "stop", "reasoning_content": reasoning_buffer}
 
     async def health_check(self) -> bool:
         try:

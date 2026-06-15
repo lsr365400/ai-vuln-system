@@ -146,7 +146,7 @@ async def run_session(
 
                         result = await execute_tool_call(tc, temp_dir, report_dir)
 
-                        messages.append({
+                        assistant_msg: dict = {
                             "role": "assistant",
                             "content": None,
                             "tool_calls": [{
@@ -157,7 +157,12 @@ async def run_session(
                                     "arguments": tc["function"]["arguments"],
                                 },
                             }],
-                        })
+                        }
+                        # Pass back reasoning_content for DeepSeek thinking mode
+                        rc = event.get("reasoning_content", "")
+                        if rc:
+                            assistant_msg["reasoning_content"] = rc
+                        messages.append(assistant_msg)
                         messages.append(result)
 
                         if tc["function"]["name"] == "finish_session":
@@ -330,8 +335,8 @@ def _build_target_profile(
             if keyword.lower() in content.lower():
                 auth_info.append(keyword)
 
-    tech_str = ", ".join(set(tech_hints)[:10]) or "未探测"
-    auth_str = ", ".join(set(auth_info)[:6]) or "未确认"
+    tech_str = ", ".join(list(set(tech_hints))[:10]) or "未探测"
+    auth_str = ", ".join(list(set(auth_info))[:6]) or "未确认"
 
     return f"""## 目标画像
 
