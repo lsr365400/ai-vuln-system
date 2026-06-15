@@ -13,10 +13,14 @@ from src.database import init_db, insert_session, update_session_status
 from src.engine.prompt_builder import build_system_prompt
 from src.engine.deepseek_client import DeepSeekClient
 from src.engine.tool_executor import execute_tool_call
+from src.engine.memory.hermes_store import HermesStore
+from src.engine.memory.compressor import should_compress, compress_messages, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
 STATUS_MARKER_PREFIX = "STATUS:"
+COMPRESS_EVERY_N_TURNS = 10  # Check compression need every N turns
+MEMORY_DIR = Path("data/memory")
 
 
 async def create_session_dir(session_id: str, session_root: Path) -> Path:
@@ -62,6 +66,12 @@ async def run_session(
     )
     await insert_session(db, session)
 
+    # ------------------------------------------------------------------
+    # Load long-term memory and inject into system prompt
+    # ------------------------------------------------------------------
+    memory_store = HermesStore(MEMORY_DIR)
+    memory_context = memory_store.build_memory_context(target_url)
+
     system_prompt = build_system_prompt(
         core_skill_path=settings.skill_file,
         target_url=target_url,
@@ -71,10 +81,22 @@ async def run_session(
         report_dir=report_dir,
     )
 
+    if memory_context:
+        memory_header = (
+            "\n\n## 长期记忆（来自之前的会话）\n\n"
+            "以下是对同一目标的过往测试记录。已测过的方向不要重复，已确认的漏洞不要重复报告。\n\n"
+        )
+        system_prompt += memory_header + memory_context
+        logger.info("[%s] 注入了长期记忆 (%d chars)", session_id, len(memory_context))
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
     client = DeepSeekClient(settings)
     messages: list[dict] = []
     status_marker = None
     turn_count = 0
+    accumulated_text = ""  # Full AI output for marker detection
     start_time = time.time()
     timeout_seconds = settings.session_timeout_hours * 3600
 
@@ -93,10 +115,24 @@ async def run_session(
             turn_count += 1
             logger.info(f"[{session_id}] Turn {turn_count}/{settings.session_max_turns}")
 
+            # ------------------------------------------------------------------
+            # Periodic compression check
+            # ------------------------------------------------------------------
+            if turn_count > 1 and turn_count % COMPRESS_EVERY_N_TURNS == 0:
+                need, level = should_compress(messages)
+                if need:
+                    logger.info(
+                        "[%s] 触发压缩 (level=%s, est_tokens=%d)",
+                        session_id, level, estimate_tokens(messages),
+                    )
+                    await compress_messages(client, messages, keep_last=12)
+                    logger.info("[%s] 压缩完成 (%d messages remain)", session_id, len(messages))
+
             try:
                 async for event in client.chat_stream(system_prompt, messages):
                     if event["type"] == "text":
                         print(event["content"], end="", flush=True)
+                        accumulated_text += event["content"]
 
                     elif event["type"] == "tool_call":
                         tc = event["tool_call"]
@@ -134,16 +170,52 @@ async def run_session(
             if status_marker:
                 break
 
+            # Also check accumulated_text for status marker
+            marker_from_text = detect_status_marker(accumulated_text)
+            if marker_from_text:
+                status_marker = marker_from_text
+                break
+
             print()
 
     finally:
         await db.close()
 
+    # ------------------------------------------------------------------
+    # Termination + save to long-term memory
+    # ------------------------------------------------------------------
     final_status = _determine_status(status_marker, report_dir, session_id)
-    final_status_str = final_status
-    await _finalize_session(settings.database_path, session_id, final_status_str)
-    return final_status_str
 
+    # Save progress snapshot
+    try:
+        progress_body = _build_progress_snapshot(
+            target_url, scenario, turn_count, final_status,
+            report_dir, session_id,
+        )
+        memory_store.save_progress(target_url, progress_body, session_id)
+
+        # Save findings to memory
+        for f in sorted(report_dir.glob(f"{session_id}__*.md")):
+            if f.stat().st_size >= 200:
+                text = f.read_text(encoding="utf-8")
+                title = _extract_title(text) or f.stem
+                memory_store.save_finding(target_url, title, text[:2000], session_id)
+
+        # Save/update target profile
+        profile_body = _build_target_profile(target_url, session_id, messages)
+        memory_store.save_target_profile(target_url, profile_body, session_id)
+
+        logger.info("[%s] 记忆已保存到 %s", session_id, MEMORY_DIR)
+    except Exception as e:
+        logger.warning("[%s] 记忆保存失败: %s", session_id, e)
+
+    await _finalize_session(settings.database_path, session_id, final_status)
+    return final_status
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
 
 def _check_disk_quota(temp_dir: Path, limit_gb: int) -> bool:
     if not temp_dir.exists():
@@ -154,7 +226,7 @@ def _check_disk_quota(temp_dir: Path, limit_gb: int) -> bool:
 
 def _determine_status(marker: str | None, report_dir: Path, session_id: str) -> str:
     has_report = False
-    for f in report_dir.glob(f"{session_id}*.md"):
+    for f in report_dir.glob(f"{session_id}__*.md"):
         if f.stat().st_size >= 200:
             has_report = True
             break
@@ -180,3 +252,71 @@ async def _finalize_session(db_path: Path, session_id: str, status: str) -> None
     db = await aiosqlite.connect(str(db_path))
     await update_session_status(db, session_id, status)
     await db.close()
+
+
+def _extract_title(report_text: str) -> str:
+    """Extract title from report frontmatter or first heading."""
+    for line in report_text.splitlines():
+        line = line.strip()
+        if line.startswith("title:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _build_progress_snapshot(
+    target_url: str, scenario: str, turns: int,
+    final_status: str, report_dir: Path, session_id: str,
+) -> str:
+    """Build a progress snapshot body for memory storage."""
+    reports = list(report_dir.glob(f"{session_id}__*.md"))
+    report_titles = []
+    for f in reports:
+        if f.stat().st_size >= 200:
+            text = f.read_text(encoding="utf-8")
+            title = _extract_title(text)
+            if title:
+                report_titles.append(f"- {title}")
+
+    return f"""## 测试进度快照
+
+- **目标**: {target_url}
+- **场景**: {scenario}
+- **完成轮次**: {turns}
+- **终态**: {final_status}
+- **报告数**: {len(report_titles)}
+
+### 本会话发现
+{chr(10).join(report_titles) if report_titles else '(无)'}
+"""
+
+
+def _build_target_profile(
+    target_url: str, session_id: str, messages: list[dict],
+) -> str:
+    """Build a target profile from accumulated messages."""
+    # Extract key info from tool results in messages
+    tech_hints = []
+    auth_info = []
+    for m in messages[-50:]:  # Look at last 50 messages for tech info
+        content = str(m.get("content", ""))
+        for keyword in ["PHP", "Apache", "nginx", "Flask", "Spring", "Django",
+                         "Python", "Java", "Tomcat", "Node.js", "IIS"]:
+            if keyword.lower() in content.lower():
+                tech_hints.append(keyword)
+        for keyword in ["PHPSESSID", "JSESSIONID", "session", "Authorization",
+                         "Bearer", "token", "Cookie"]:
+            if keyword.lower() in content.lower():
+                auth_info.append(keyword)
+
+    tech_str = ", ".join(set(tech_hints)[:10]) or "未探测"
+    auth_str = ", ".join(set(auth_info)[:6]) or "未确认"
+
+    return f"""## 目标画像
+
+- **URL**: {target_url}
+- **技术栈**: {tech_str}
+- **认证机制**: {auth_str}
+- **最近会话**: {session_id}
+
+> 此画像随每次测试自动更新。
+"""

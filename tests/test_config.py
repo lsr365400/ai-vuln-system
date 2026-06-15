@@ -7,7 +7,7 @@ from src.config import Settings, load_settings
 def test_settings_defaults():
     with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=True):
         s = Settings()
-        assert s.deepseek_model == "deepseek-chat"
+        assert s.deepseek_model == "deepseek-v4-pro"
         assert s.session_max_turns == 200
         assert s.session_disk_limit_gb == 5
 

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # DeepSeek API
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-v4-pro"
 
     # 项目路径
     project_root: Path = Path(".")
