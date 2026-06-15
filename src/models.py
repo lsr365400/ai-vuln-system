@@ -25,7 +25,7 @@ class Session:
     priority: int = 5
     temp_dir: Optional[Path] = None
     report_dir: Optional[Path] = None
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     error_msg: Optional[str] = None
@@ -39,4 +39,5 @@ class ReportMeta:
     target: str
     type: str
     file_path: Path
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    fingerprint: Optional[str] = None
+    created_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

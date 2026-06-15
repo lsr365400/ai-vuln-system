@@ -1,5 +1,6 @@
 import aiosqlite
 from pathlib import Path
+from typing import Optional
 
 
 SCHEMA = """
@@ -62,7 +63,7 @@ async def insert_session(db: aiosqlite.Connection, s) -> None:
 
 
 async def update_session_status(db: aiosqlite.Connection, session_id: str, status: str,
-                                 error_msg: str | None = None) -> None:
+                                 error_msg: Optional[str] = None) -> None:
     if status in ("vuln_found", "low_roi", "need_input", "error", "stopped"):
         await db.execute(
             "UPDATE sessions SET status=?, finished_at=datetime('now'), error_msg=? WHERE id=?",
