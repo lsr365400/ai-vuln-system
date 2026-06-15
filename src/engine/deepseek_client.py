@@ -111,16 +111,9 @@ class DeepSeekClient:
             *messages,
         ]
 
-        # Strip reasoning_content from passed-in messages for API compatibility
-        # (it's only needed in the immediate next turn, not across all turns)
-        clean_messages = []
-        for m in full_messages:
-            clean = {k: v for k, v in m.items() if k != "reasoning_content"}
-            clean_messages.append(clean)
-
         stream = await self.client.chat.completions.create(
             model=self.model,
-            messages=clean_messages,
+            messages=full_messages,
             tools=TOOLS,
             tool_choice="auto",
             max_tokens=max_tokens,
