@@ -15,6 +15,7 @@ from src.engine.deepseek_client import DeepSeekClient
 from src.engine.tool_executor import execute_tool_call
 from src.engine.memory.hermes_store import HermesStore
 from src.engine.memory.compressor import should_compress, compress_messages, estimate_tokens
+from src.engine.report_indexer import index_all_reports
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,7 @@ async def run_session(
     client = DeepSeekClient(settings)
     messages: list[dict] = []
     status_marker = None
+    final_status = None
     turn_count = 0
     accumulated_text = ""  # Full AI output for marker detection
     start_time = time.time()
@@ -105,12 +107,16 @@ async def run_session(
             if time.time() - start_time > timeout_seconds:
                 logger.warning(f"会话 {session_id} 超时")
                 await update_session_status(db, session_id, "error", "硬时间上限")
-                return "error"
+                status_marker = None
+                final_status = "error"
+                break
 
             if _check_disk_quota(temp_dir, settings.session_disk_limit_gb):
                 logger.warning(f"会话 {session_id} 磁盘配额超限")
                 await update_session_status(db, session_id, "error", "磁盘配额超限")
-                return "error"
+                status_marker = None
+                final_status = "error"
+                break
 
             turn_count += 1
             logger.info(f"[{session_id}] Turn {turn_count}/{settings.session_max_turns}")
@@ -165,7 +171,9 @@ async def run_session(
             except Exception as e:
                 logger.error(f"[{session_id}] API 调用失败: {e}")
                 await update_session_status(db, session_id, "error", str(e))
-                return "error"
+                status_marker = None
+                final_status = "error"
+                break
 
             if status_marker:
                 break
@@ -179,12 +187,26 @@ async def run_session(
             print()
 
     finally:
-        await db.close()
+        pass  # db handled below
+
+    # ------------------------------------------------------------------
+    # Index reports to SQLite + email notify
+    # ------------------------------------------------------------------
+    try:
+        indexed = await index_all_reports(db, session_id, report_dir)
+        if indexed:
+            p1p2 = [r for r in indexed if r["severity"] in ("P1", "P2")]
+            logger.info("[%s] 报告入库: %d 份 (P1/P2: %d)", session_id, len(indexed), len(p1p2))
+    except Exception as e:
+        logger.warning("[%s] 报告索引失败: %s", session_id, e)
+
+    await db.close()
 
     # ------------------------------------------------------------------
     # Termination + save to long-term memory
     # ------------------------------------------------------------------
-    final_status = _determine_status(status_marker, report_dir, session_id)
+    if final_status is None:
+        final_status = _determine_status(status_marker, report_dir, session_id)
 
     # Save progress snapshot
     try:
