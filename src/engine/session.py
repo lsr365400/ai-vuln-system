@@ -9,7 +9,7 @@ import aiosqlite
 
 from src.config import Settings
 from src.models import Session, SessionStatus
-from src.database import init_db, insert_session, update_session_status, insert_event_log, track_endpoint, get_tested_endpoints, get_tested_urls
+from src.database import init_db, insert_session, update_session_status, insert_event_log, track_endpoint, get_tested_endpoints, get_tested_urls, track_failed_path, get_failed_paths
 from src.engine.prompt_builder import build_system_prompt
 from src.engine.deepseek_client import DeepSeekClient
 from src.engine.tool_executor import execute_tool_call
@@ -118,13 +118,26 @@ async def _run_session_with_id(
         system_prompt += memory_header + memory_context
         logger.info("[%s] 注入了长期记忆 (%d chars)", session_id, len(memory_context))
 
-    # Inject already-tested URLs from this session
+    # Inject already-tested URLs and failed paths
     from urllib.parse import urlparse
     host = urlparse(target_url).netloc or target_url
     tested_urls = await get_tested_urls(db, host)
     if tested_urls:
         urls_text = "\n".join(f"- {u}" for u in tested_urls[:30])
         system_prompt += f"\n\n## 已测试端点（本会话，不要重复测试相同路径）\n\n{urls_text}"
+
+    failed = await get_failed_paths(db, host)
+    if failed:
+        failed_text = "\n".join(
+            f"- **{f['technique']}**: {f['reason']}"
+            f" (payload: `{f['payload_short'][:60]}`)" if f.get('payload_short') else ""
+            for f in failed[:20]
+        )
+        failed_header = (
+            "\n\n## ⛔ 已确认无效的攻击路径（优先阅读，不要重复！）\n\n"
+            "以下路径在上次测试中已被确认不存在漏洞或被 WAF 封杀。不要浪费时间重复尝试：\n\n"
+        )
+        system_prompt += failed_header + failed_text
 
     # ------------------------------------------------------------------
     # Main loop
@@ -220,6 +233,15 @@ async def _run_session_with_id(
                             if tracked_url:
                                 tracked_method = args.get("method", "GET") if tc["function"]["name"] == "curl_http" else "GET"
                                 await track_endpoint(db, session_id, tracked_url, tracked_method)
+                            # Auto-track failures (403=WAF, 500=error, empty=dead end)
+                            result_str = str(result.get("content", ""))
+                            status = result.get("status_code", 0) if isinstance(result, dict) else 0
+                            if status == 403:
+                                await track_failed_path(db, session_id, tracked_url, "WAF拦截(403)", "SafeLine封杀")
+                            elif status == 429:
+                                await track_failed_path(db, session_id, tracked_url, "频率限制(429)", "rate-limited")
+                            elif "error" in result_str.lower() and "timeout" not in result_str.lower():
+                                await track_failed_path(db, session_id, tracked_url, "请求失败", result_str[:150])
 
                         assistant_msg: dict = {
                             "role": "assistant",

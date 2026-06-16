@@ -54,6 +54,16 @@ CREATE TABLE IF NOT EXISTS tested_endpoints (
     snippet         TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS failed_paths (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL,
+    target_url      TEXT NOT NULL,
+    technique       TEXT NOT NULL,
+    payload_short   TEXT,
+    reason          TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -157,6 +167,7 @@ async def delete_session(db: aiosqlite.Connection, session_id: str) -> bool:
         return False
     await db.execute("DELETE FROM event_log WHERE session_id = ?", (session_id,))
     await db.execute("DELETE FROM tested_endpoints WHERE session_id = ?", (session_id,))
+    await db.execute("DELETE FROM failed_paths WHERE session_id = ?", (session_id,))
     await db.execute("DELETE FROM reports WHERE session_id = ?", (session_id,))
     await db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
     await db.commit()
@@ -196,3 +207,24 @@ async def get_tested_urls(db: aiosqlite.Connection, target_host: str) -> list[st
     )
     rows = await cursor.fetchall()
     return [r[0] for r in rows]
+
+
+async def track_failed_path(db: aiosqlite.Connection, session_id: str, target_url: str,
+                            technique: str, reason: str, payload_short: str = "") -> None:
+    await db.execute(
+        "INSERT INTO failed_paths (session_id, target_url, technique, payload_short, reason) VALUES (?, ?, ?, ?, ?)",
+        (session_id, target_url, technique, payload_short[:200], reason),
+    )
+    await db.commit()
+
+
+async def get_failed_paths(db: aiosqlite.Connection, target_host: str) -> list[dict]:
+    """Get all failed paths for a target host across sessions."""
+    cursor = await db.execute(
+        "SELECT DISTINCT technique, payload_short, reason, MAX(created_at) as last_seen FROM failed_paths "
+        "WHERE target_url LIKE ? GROUP BY technique, reason ORDER BY last_seen DESC LIMIT 30",
+        (f"{target_host}%",),
+    )
+    rows = await cursor.fetchall()
+    cols = [c[0] for c in cursor.description]
+    return [dict(zip(cols, r)) for r in rows]
