@@ -163,16 +163,21 @@ async def _run_session_with_id(
                     await compress_messages(client, messages, keep_last=12)
                     logger.info("[%s] 压缩完成 (%d messages remain)", session_id, len(messages))
 
+            text_buffer = ""  # Buffer text chunks into sentences before DB write
             try:
                 async for event in client.chat_stream(system_prompt, messages):
                     if event["type"] == "text":
                         print(event["content"], end="", flush=True)
                         accumulated_text += event["content"]
+                        text_buffer += event["content"]
                         if event_bus:
                             event_bus.publish(session_id, {"type": "text", "content": event["content"]})
-                        await insert_event_log(db, session_id, "text", event["content"])
 
                     elif event["type"] == "tool_call":
+                        # Flush buffered text as one event
+                        if text_buffer.strip():
+                            await insert_event_log(db, session_id, "text", text_buffer.strip())
+                            text_buffer = ""
                         tc = event["tool_call"]
                         logger.info(f"[{session_id}] Tool call: {tc['function']['name']}")
                         if event_bus:
@@ -206,7 +211,9 @@ async def _run_session_with_id(
                             break
 
                     elif event["type"] == "finish":
-                        pass
+                        if text_buffer.strip():
+                            await insert_event_log(db, session_id, "text", text_buffer.strip())
+                            text_buffer = ""
 
             except Exception as e:
                 logger.error(f"[{session_id}] API 调用失败: {e}")
