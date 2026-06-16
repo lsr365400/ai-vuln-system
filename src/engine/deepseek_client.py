@@ -128,9 +128,10 @@ class DeepSeekClient:
             delta = chunk.choices[0].delta
             finish_reason = chunk.choices[0].finish_reason
 
-            # Accumulate reasoning_content (DeepSeek thinking mode)
+            # Yield reasoning_content as text (DeepSeek thinking mode — this is the visible output)
             if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                 reasoning_buffer += delta.reasoning_content
+                yield {"type": "text", "content": delta.reasoning_content}
 
             if delta.content:
                 yield {"type": "text", "content": delta.content}
