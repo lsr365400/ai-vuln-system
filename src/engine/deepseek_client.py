@@ -139,7 +139,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "brute_force",
-            "description": "用 ffuf 对登录接口进行密码爆破。字典默认 rockyou.txt。仅限授权测试/CTF 使用，edu 场景禁止。",
+            "description": "用 ffuf 对登录接口进行密码爆破。默认字典 top100.txt (39个高命中默认密码)。",
             "parameters": {
                 "type": "object",
                 "properties": {
