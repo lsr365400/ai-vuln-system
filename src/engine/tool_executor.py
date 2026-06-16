@@ -175,6 +175,45 @@ async def execute_check_auth(tool_args: dict[str, Any]) -> dict[str, Any]:
         return {"authenticated": False, "evidence": f"请求失败: {e}"}
 
 
+async def execute_analyze_js(tool_args: dict[str, Any], temp_dir: Path) -> dict[str, Any]:
+    """Download a JS file and analyze it with jsluice for routes, secrets, and endpoints."""
+    url = tool_args["url"]
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.get(url)
+            js_content = response.text
+            if response.status_code != 200 or not js_content.strip():
+                return {"error": f"JS 文件获取失败 (status={response.status_code})"}
+
+            js_file = temp_dir / "analyze_target.js"
+            js_file.write_text(js_content, encoding="utf-8")
+
+            urls_output = ""
+            secrets_output = ""
+            proc = await asyncio.create_subprocess_exec(
+                "jsluice", "urls", str(js_file),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+            urls_output = stdout.decode("utf-8", errors="replace")[:6000]
+
+            proc2 = await asyncio.create_subprocess_exec(
+                "jsluice", "secrets", str(js_file),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=15)
+            secrets_output = stdout2.decode("utf-8", errors="replace")[:3000]
+
+            return {
+                "file": url,
+                "size": len(js_content),
+                "urls_found": urls_output,
+                "secrets_found": secrets_output or "(none)",
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 async def execute_write_report(tool_args: dict[str, Any], report_dir: Path) -> dict[str, Any]:
     filename = tool_args["filename"]
     content = tool_args["content"]
@@ -210,6 +249,8 @@ async def execute_tool_call(
         result = await execute_shell(args, temp_dir)
     elif name == "write_report":
         result = await execute_write_report(args, report_dir)
+    elif name == "analyze_js":
+        result = await execute_analyze_js(args, temp_dir)
     elif name == "finish_session":
         result = {"acknowledged": True, "status": args.get("status", "UNKNOWN")}
     else:

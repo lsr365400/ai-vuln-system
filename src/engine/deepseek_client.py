@@ -124,6 +124,20 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "analyze_js",
+            "description": "下载一个 JavaScript 文件并用 jsluice 分析：提取所有 URL、API 路径、路由、密钥、token、Firebase 配置。拿到 JS 文件就先用这个工具分析，再手动读代码。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "JS 文件的完整 URL"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "exec_shell",
             "description": "在沙箱临时目录执行命令（支持管道、脚本、批量枚举。危险性由系统拦截层保障，放心使用）",
             "parameters": {
