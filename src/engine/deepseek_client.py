@@ -13,58 +13,6 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "browser_navigate",
-            "description": "用真实浏览器打开页面（自动维护 Cookie/Session）。返回完整渲染后的 HTML、链接、表单、脚本。登录页面用这个而不是 curl_http。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "页面 URL"},
-                    "timeout": {"type": "integer", "default": 30000},
-                },
-                "required": ["url"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "browser_login",
-            "description": "在浏览器中填写登录表单并提交。自动跟踪 cookie/session，返回确认的登录状态。登录后同 session 的后续 browser_navigate 自动携带认证 cookie。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "登录页面 URL"},
-                    "username": {"type": "string", "description": "用户名"},
-                    "password": {"type": "string", "description": "密码"},
-                    "username_field": {"type": "string", "default": "input[name=username]", "description": "用户名字段的 CSS 选择器"},
-                    "password_field": {"type": "string", "default": "input[name=password]", "description": "密码字段的 CSS 选择器"},
-                    "submit_button": {"type": "string", "default": "input[type=submit], button[type=submit]", "description": "提交按钮的 CSS 选择器"},
-                    "timeout": {"type": "integer", "default": 30000},
-                },
-                "required": ["url", "username", "password"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "browser_extract",
-            "description": "从当前或新页面提取指定内容：CSS 选择器、全文 HTML、包含特定文本的元素。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "可选，要加载的页面 URL（不填则使用当前已登录页面）"},
-                    "selector": {"type": "string", "description": "CSS 选择器，如 '.vulnerability-list a'"},
-                    "get_html": {"type": "boolean", "default": False, "description": "是否返回完整 HTML"},
-                    "contains": {"type": "string", "description": "搜索包含此文本的元素"},
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "curl_http",
             "description": "发送 HTTP 请求（支持 GET/POST/PUT/DELETE），返回响应头和响应体",
             "parameters": {

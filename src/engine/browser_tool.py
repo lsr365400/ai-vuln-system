@@ -18,27 +18,29 @@ _playwright = None
 async def _get_browser():
     global _browser, _playwright
     if _browser is None:
-        from playwright.async_api import async_playwright
-        import os
-        _playwright = await async_playwright().start()
-        # Try system chromium paths (no CDN download needed)
-        system_chrome = ""
-        for candidate in [
-            os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", ""),
-            "/snap/chromium/3459/usr/lib/chromium-browser/chrome",
-            "/usr/bin/chromium-browser",
-            "/usr/bin/chromium",
-            "/snap/bin/chromium",
-        ]:
-            if candidate and Path(candidate).exists():
-                system_chrome = candidate
-                break
-        launch_args = {"headless": True, "args": ["--no-sandbox", "--disable-gpu"]}
-        if system_chrome:
-            launch_args["executable_path"] = system_chrome
-            logger.info("using system chromium: %s", system_chrome)
-        _browser = await _playwright.chromium.launch(**launch_args)
-        logger.info("playwright browser launched")
+        try:
+            from playwright.async_api import async_playwright
+            import os
+            _playwright = await async_playwright().start()
+            system_chrome = ""
+            for candidate in [
+                os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", ""),
+                "/snap/chromium/3459/usr/lib/chromium-browser/chrome",
+                "/usr/bin/chromium-browser",
+                "/usr/bin/chromium",
+                "/snap/bin/chromium",
+            ]:
+                if candidate and Path(candidate).exists():
+                    system_chrome = candidate
+                    break
+            launch_args = {"headless": True, "args": ["--no-sandbox", "--disable-gpu"]}
+            if system_chrome:
+                launch_args["executable_path"] = system_chrome
+            _browser = await _playwright.chromium.launch(**launch_args)
+            logger.info("playwright browser launched")
+        except Exception as e:
+            logger.warning("browser launch failed: %s — browser tools will be unavailable", e)
+            return None
     return _browser
 
 
@@ -48,8 +50,10 @@ _contexts: dict[str, Any] = {}
 
 async def get_context(session_id: str, temp_dir: Path) -> Any:
     """Get or create an isolated browser context for this session."""
+    browser = await _get_browser()
+    if browser is None:
+        return None
     if session_id not in _contexts:
-        browser = await _get_browser()
         user_data = temp_dir / "browser_profile"
         user_data.mkdir(parents=True, exist_ok=True)
         ctx = await browser.new_context(
@@ -70,6 +74,8 @@ async def cleanup_context(session_id: str) -> None:
 async def browser_navigate(session_id: str, temp_dir: Path, args: dict) -> dict:
     """Navigate to a URL and return full rendered page info."""
     ctx = await get_context(session_id, temp_dir)
+    if ctx is None:
+        return {"error": "浏览器不可用（chromium 未安装），请改用 curl_http"}
     page = await ctx.new_page()
     try:
         await page.goto(args["url"], wait_until="networkidle", timeout=args.get("timeout", 30000))
@@ -102,6 +108,8 @@ async def browser_navigate(session_id: str, temp_dir: Path, args: dict) -> dict:
 async def browser_login(session_id: str, temp_dir: Path, args: dict) -> dict:
     """Fill login form, submit, and verify authentication."""
     ctx = await get_context(session_id, temp_dir)
+    if ctx is None:
+        return {"error": "浏览器不可用（chromium 未安装），请改用 curl_http"}
     page = await ctx.new_page()
     try:
         # Navigate to login page
@@ -148,6 +156,8 @@ async def browser_login(session_id: str, temp_dir: Path, args: dict) -> dict:
 async def browser_extract(session_id: str, temp_dir: Path, args: dict) -> dict:
     """Extract content from a currently-loaded or new page. Use after browser_navigate to read specific elements."""
     ctx = await get_context(session_id, temp_dir)
+    if ctx is None:
+        return {"error": "浏览器不可用（chromium 未安装），请改用 curl_http"}
     page = await ctx.new_page()
     try:
         if args.get("url"):

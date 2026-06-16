@@ -205,10 +205,7 @@ async def execute_tool_call(
     name = tool_call["function"]["name"]
     args = tool_call["function"].get("arguments_parsed", {})
 
-    if name in ("browser_navigate", "browser_login", "browser_extract"):
-        from src.engine.browser_tool import execute_browser_tool
-        return await execute_browser_tool(session_id, temp_dir, tool_call)
-    elif name == "curl_http":
+    if name == "curl_http":
         result = await execute_curl(args, session_id=session_id, temp_dir=temp_dir)
     elif name == "discover_endpoints":
         result = await execute_discover(args)

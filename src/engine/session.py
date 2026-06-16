@@ -17,7 +17,6 @@ from src.engine.memory.hermes_store import HermesStore
 from src.engine.memory.compressor import should_compress, compress_messages, estimate_tokens
 from src.engine.report_indexer import index_all_reports
 from src.safety.disk_guard import DiskGuard
-from src.engine.browser_tool import cleanup_context
 
 logger = logging.getLogger(__name__)
 
@@ -313,8 +312,6 @@ async def _run_session_with_id(
     except Exception as e:
         logger.warning("[%s] 记忆保存失败: %s", session_id, e)
 
-    # Cleanup browser context
-    await cleanup_context(session_id)
     await _finalize_session(settings.database_path, session_id, final_status)
     return final_status
 
