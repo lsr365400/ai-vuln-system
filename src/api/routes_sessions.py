@@ -98,9 +98,9 @@ async def get_session_events(session_id: str, request: Request, limit: int = 500
 async def stop_session_api(session_id: str, request: Request):
     scheduler = request.app.state.scheduler
     ok = scheduler.stop_session(session_id)
-    if ok:
-        await update_session_status(request.app.state.db, session_id, "stopped")
-    return {"stopped": ok}
+    # Force-stop: mark as stopped even if scheduler lost track (e.g. after restart)
+    await update_session_status(request.app.state.db, session_id, "stopped")
+    return {"stopped": True}
 
 
 @router.delete("/{session_id}")

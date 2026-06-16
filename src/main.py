@@ -22,6 +22,11 @@ scheduler = Scheduler(max_concurrent=5, max_per_project=3)
 async def lifespan(app: FastAPI):
     # Startup
     app.state.db = await init_db(settings.database_path)
+    # Mark any lingering "running" sessions as error (server restart = lost tasks)
+    await app.state.db.execute(
+        "UPDATE sessions SET status='error', error_msg='server restarted', finished_at=datetime('now') WHERE status='running'"
+    )
+    await app.state.db.commit()
     app.state.settings = settings
     app.state.scheduler = scheduler
     app.state.event_bus = bus
