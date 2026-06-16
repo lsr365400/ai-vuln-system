@@ -10,41 +10,29 @@
 
 如果用户说"哈尔滨职业技术学院"，域名通常是 `hrbzy.edu.cn`（缩写+edu.cn）。
 
-## 阶段二：寻找登录入口 + 默认密码尝试
+## 阶段二：Google Dork — 搜索含有默认密码的文件
 
-对每个学校的域名，探测常见教务系统登录入口：
+学校的系统使用手册、新生指南、操作说明中经常**明文写着系统默认密码**。用 Google 语法找到它们：
 
 ```
-{domain}/login
-{domain}/admin
-{domain}/jwgl
-{domain}/cas
-{domain}/sso
-{domain}/portal
-{domain}/管理
-{domain}:8080
-{domain}:9081
-{domain}:8443
+site:{domain} "默认密码" filetype:pdf
+site:{domain} "初始密码" "学号"
+site:{domain} "登录密码" filetype:doc
+site:{domain} intext:初始密码 filetype:xls
+site:{domain} "密码规则" filetype:pdf
+site:{domain} "系统登录" "默认" filetype:pdf
+site:{domain} 密码 filetype:docx
+site:{domain} "忘记了密码" "初始密码"
 ```
 
-发现登录页面后，尝试以下默认密码（每组 3 秒内完成，不暴力破解）：
+常见暴露默认密码的场景：
+- 新生入学通知：`"初始密码为身份证后6位"` 或 `"默认密码为学号"`
+- 系统操作手册 PDF：`"管理员默认密码: admin/admin123"`
+- Excel 账号表：`"初始密码"` 列，全员统一
 
-| 框架/系统 | 默认凭据 |
-|-----------|---------|
-| 若依管理系统 | admin/admin123, ry/admin123 |
-| 正方教务 | admin/admin, sa/sa |
-| 强智教务 | admin/admin, admin/123456 |
-| 金智教务 | admin/admin, admin/123456 |
-| 中科教务 | admin/admin888 |
-| 通用弱口令 | admin/admin, admin/123456, admin/password, test/test, guest/guest, root/root, system/manager |
-| Cas/Shibboleth | admin/admin |
-| Tomcat | tomcat/tomcat, admin/admin |
+搜到的文件逐一下载阅读，提取所有密码规则和默认凭据。
 
-如通过默认密码进入系统，记录登录入口和凭据，但不深入操作（只读规则）。
-
-## 阶段三：Google Dork 搜索
-
-对每个域名执行以下 Google 搜索（用 WebSearch 或 WebFetch）：
+## 阶段三：Google Dork — 搜索含有身份证/学号的敏感文件
 
 ```
 site:{domain} 身份证 filetype:xls
