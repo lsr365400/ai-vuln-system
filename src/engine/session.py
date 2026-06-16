@@ -333,6 +333,33 @@ async def _run_session_with_id(
     except Exception as e:
         logger.warning("[%s] 报告索引失败: %s", session_id, e)
 
+    # Record cross-target experience (before db close)
+    try:
+        profile_body = _build_target_profile(target_url, session_id, messages)
+        tech_sig = generalize_tech_stack(profile_body)
+        if tech_sig:
+            acc_lower = accumulated_text.lower()
+            if any(kw in acc_lower for kw in ["safeline", "waf", "403 forbidden", "雷池"]):
+                await record_technique(db, tech_sig, "WAF detected", "blocked", "WAF")
+            if "rate limit" not in acc_lower and "captcha" not in acc_lower and "验证码" not in acc_lower:
+                if any(kw in acc_lower for kw in ["11105", "密码错误"]):
+                    await record_technique(db, tech_sig, "Login: no rate limiting", "info", "")
+            if "x-token" in acc_lower or "bearer" in acc_lower:
+                await record_technique(db, tech_sig, "Auth: token-based", "info", "")
+            if "11104" in acc_lower and "11105" in acc_lower:
+                await record_technique(db, tech_sig, "Login: user enumerable", "info", "")
+            await record_technique(db, tech_sig, f"Stack: {tech_sig}", "info", "")
+            for f in sorted(report_dir.glob(f"{session_id}__*.md")):
+                if f.stat().st_size >= 200:
+                    text = f.read_text(encoding="utf-8")
+                    title = _extract_title(text) or f.stem
+                    await record_technique(db, tech_sig, f"Found: {title}", "success", text[:300])
+            failed = await get_failed_paths(db, host)
+            for f in failed[:3]:
+                await record_technique(db, tech_sig, f"Block: {f['reason']}", "blocked", "")
+    except Exception as e:
+        logger.debug("technique recording: %s", e)
+
     await db.close()
 
     # ------------------------------------------------------------------
@@ -340,24 +367,6 @@ async def _run_session_with_id(
     # ------------------------------------------------------------------
     if final_status is None:
         final_status = _determine_status(status_marker, report_dir, session_id)
-
-    # Record cross-target technique effectiveness
-    try:
-        profile_body = _build_target_profile(target_url, session_id, messages)
-        tech_sig = generalize_tech_stack(profile_body)
-        if tech_sig:
-            # Record findings as effective
-            for f in sorted(report_dir.glob(f"{session_id}__*.md")):
-                if f.stat().st_size >= 200:
-                    text = f.read_text(encoding="utf-8")
-                    title = _extract_title(text) or f.stem
-                    await record_technique(db, tech_sig, f"发现: {title}", "success", text[:300])
-            # Record WAF/403 blocks as ineffective
-            failed = await get_failed_paths(db, host)
-            for f in failed[:5]:
-                await record_technique(db, tech_sig, f"WAF拦截: {f['reason']}", "blocked", "")
-    except Exception as e:
-        logger.warning("technique recording failed: %s", e)
 
     # Save progress snapshot
     try:
