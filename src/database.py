@@ -67,6 +67,24 @@ CREATE TABLE IF NOT EXISTS technique_effectiveness (
     UNIQUE(tech_stack, technique)
 );
 
+CREATE TABLE IF NOT EXISTS vector_memory (
+    id              TEXT PRIMARY KEY,
+    content         TEXT NOT NULL,
+    embedding_json  TEXT NOT NULL,
+    mem_type        TEXT NOT NULL DEFAULT 'finding',
+    metadata_json   TEXT DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS attack_chains (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL,
+    from_node       TEXT NOT NULL,
+    relationship    TEXT NOT NULL,
+    to_node         TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS failed_paths (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id      TEXT NOT NULL,

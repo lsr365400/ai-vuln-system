@@ -15,6 +15,7 @@ from src.engine.deepseek_client import DeepSeekClient
 from src.engine.tool_executor import execute_tool_call
 from src.engine.memory.hermes_store import HermesStore
 from src.engine.memory.compressor import should_compress, compress_messages, estimate_tokens
+from src.engine.memory.pentagi_memory import build_cross_target_context, store_vector, record_attack_chain
 from src.engine.report_indexer import index_all_reports
 from src.safety.disk_guard import DiskGuard
 from src.engine.browser_tool import cleanup_context
@@ -147,6 +148,15 @@ async def _run_session_with_id(
             "\n\n## 🧠 跨目标经验（已验证有效的技术，优先尝试）\n\n"
             + success_lines + "\n"
         )
+
+    # PentAGI vector memory: semantic search for similar past findings
+    try:
+        vector_ctx = await build_cross_target_context(db, target_url)
+        if vector_ctx:
+            system_prompt += "\n\n" + vector_ctx
+            logger.info("[%s] vector memory injected", session_id)
+    except Exception as e:
+        logger.debug("[%s] vector memory skipped: %s", session_id, e)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -367,6 +377,18 @@ async def _run_session_with_id(
         # Save/update target profile
         profile_body = _build_target_profile(target_url, session_id, messages)
         memory_store.save_target_profile(target_url, profile_body, session_id)
+
+        # PentAGI vector memory: store findings as embeddings
+        for f in sorted(report_dir.glob(f"{session_id}__*.md")):
+            if f.stat().st_size >= 200:
+                text = f.read_text(encoding="utf-8")
+                title = _extract_title(text) or f.stem
+                tech_sig = generalize_tech_stack(profile_body)
+                try:
+                    await store_vector(db, f"漏洞: {title}\n技术栈: {tech_sig}\n{text[:500]}", "finding")
+                    await record_attack_chain(db, session_id, "recon", "发现", title)
+                except Exception:
+                    pass
 
         logger.info("[%s] 记忆已保存到 %s", session_id, MEMORY_DIR)
     except Exception as e:
