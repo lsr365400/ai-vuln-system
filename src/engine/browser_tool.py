@@ -103,21 +103,25 @@ async def browser_login(session_id: str, temp_dir: Path, args: dict) -> dict:
     page = await ctx.new_page()
     try:
         # Navigate to login page
-        await page.goto(args["url"], wait_until="networkidle", timeout=args.get("timeout", 30000))
+        await page.goto(args["url"], wait_until="domcontentloaded", timeout=args.get("timeout", 20000))
         login_url = page.url
 
         # Fill fields
         username_field = args.get("username_field", "input[name=username]")
         password_field = args.get("password_field", "input[name=password]")
+        await page.wait_for_selector(username_field, timeout=10000)
         await page.fill(username_field, args["username"])
         await page.fill(password_field, args["password"])
 
-        # Click submit
+        # Click submit or press Enter
         submit_btn = args.get("submit_button", "input[type=submit], button[type=submit]")
-        await page.click(submit_btn)
+        if await page.locator(submit_btn).count() > 0:
+            await page.locator(submit_btn).first.click(timeout=10000)
+        else:
+            await page.keyboard.press("Enter")
 
         # Wait for navigation
-        await page.wait_for_load_state("networkidle", timeout=15000)
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
 
         current_url = page.url
         current_title = await page.title()

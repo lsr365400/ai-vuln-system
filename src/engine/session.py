@@ -206,7 +206,12 @@ async def _run_session_with_id(
                             event_bus.publish(session_id, {"type": "tool_call", "name": tc["function"]["name"]})
                         await insert_event_log(db, session_id, "tool_call", tc["function"]["name"])
 
-                        result = await execute_tool_call(tc, temp_dir, report_dir, session_id=session_id)
+                        try:
+                            result = await execute_tool_call(tc, temp_dir, report_dir, session_id=session_id)
+                        except Exception as tool_err:
+                            logger.error("[%s] Tool %s crashed: %s", session_id, tc["function"]["name"], tool_err)
+                            result = {"tool_call_id": tc["id"], "role": "tool",
+                                       "content": f"Tool execution failed: {tool_err} — try a different approach"}
 
                         # Auto-detect login attempts and inject auth status
                         if tc["function"]["name"] == "curl_http":
