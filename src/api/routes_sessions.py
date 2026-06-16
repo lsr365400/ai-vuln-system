@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel
 
 from src.models import Session, SessionStatus
-from src.database import insert_session, update_session_status, get_session, list_sessions
+from src.database import insert_session, update_session_status, get_session, list_sessions, get_event_log
 from src.scheduler import SessionTask
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -86,6 +86,12 @@ async def get_session_api(session_id: str, request: Request):
     if not s:
         raise HTTPException(404, "Session not found")
     return s
+
+
+@router.get("/{session_id}/events")
+async def get_session_events(session_id: str, request: Request, limit: int = 500):
+    events = await get_event_log(request.app.state.db, session_id, limit=limit)
+    return {"events": events, "total": len(events)}
 
 
 @router.post("/{session_id}/stop")

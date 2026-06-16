@@ -9,7 +9,7 @@ import aiosqlite
 
 from src.config import Settings
 from src.models import Session, SessionStatus
-from src.database import init_db, insert_session, update_session_status
+from src.database import init_db, insert_session, update_session_status, insert_event_log
 from src.engine.prompt_builder import build_system_prompt
 from src.engine.deepseek_client import DeepSeekClient
 from src.engine.tool_executor import execute_tool_call
@@ -170,12 +170,14 @@ async def _run_session_with_id(
                         accumulated_text += event["content"]
                         if event_bus:
                             event_bus.publish(session_id, {"type": "text", "content": event["content"]})
+                        await insert_event_log(db, session_id, "text", event["content"])
 
                     elif event["type"] == "tool_call":
                         tc = event["tool_call"]
                         logger.info(f"[{session_id}] Tool call: {tc['function']['name']}")
                         if event_bus:
                             event_bus.publish(session_id, {"type": "tool_call", "name": tc["function"]["name"]})
+                        await insert_event_log(db, session_id, "tool_call", tc["function"]["name"])
 
                         result = await execute_tool_call(tc, temp_dir, report_dir)
 

@@ -117,3 +117,21 @@ async def list_reports(db: aiosqlite.Connection, limit: int = 50, offset: int = 
     rows = await cursor.fetchall()
     cols = [c[0] for c in cursor.description]
     return [dict(zip(cols, r)) for r in rows]
+
+
+async def insert_event_log(db: aiosqlite.Connection, session_id: str, event_type: str, payload: str) -> None:
+    await db.execute(
+        "INSERT INTO event_log (session_id, event_type, payload) VALUES (?, ?, ?)",
+        (session_id, event_type, payload),
+    )
+    await db.commit()
+
+
+async def get_event_log(db: aiosqlite.Connection, session_id: str, limit: int = 500) -> list[dict]:
+    cursor = await db.execute(
+        "SELECT event_type, payload, created_at FROM event_log WHERE session_id = ? ORDER BY id ASC LIMIT ?",
+        (session_id, limit),
+    )
+    rows = await cursor.fetchall()
+    cols = [c[0] for c in cursor.description]
+    return [dict(zip(cols, r)) for r in rows]
