@@ -1,234 +1,436 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 漏洞挖掘系统</title>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .log-line { font-family: 'Consolas', monospace; font-size: 13px; line-height: 1.5; }
-        .log-line:hover { background: #1a2332; }
-        .badge-P1 { background: #dc2626; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-        .badge-P2 { background: #ea580c; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-        .badge-P3 { background: #ca8a04; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-        .status-queued { color: #a5d6ff; }
-        .status-running { color: #3fb950; animation: pulse 1.5s infinite; }
-        .status-vuln_found { color: #f0883e; }
-        .status-low_roi { color: #8b949e; }
-        .status-error { color: #f85149; }
-        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 漏洞挖掘系统</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+:root {
+    --bg: #f0f2f5;
+    --surface: #fff;
+    --border: #e5e7eb;
+    --text: #1f2937;
+    --text2: #6b7280;
+    --primary: #4f46e5;
+    --primary-light: #eef2ff;
+    --green: #059669;
+    --green-bg: #ecfdf5;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --orange: #ea580c;
+    --orange-bg: #fff7ed;
+    --yellow: #ca8a04;
+    --yellow-bg: #fefce8;
+    --blue: #2563eb;
+    --blue-bg: #eff6ff;
+    --gray: #6b7280;
+    --gray-bg: #f9fafb;
+    --radius: 10px;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --shadow-md: 0 4px 6px rgba(0,0,0,.05), 0 2px 4px rgba(0,0,0,.04);
+    --shadow-lg: 0 10px 15px rgba(0,0,0,.06), 0 4px 6px rgba(0,0,0,.04);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; background: var(--bg); color: var(--text); min-height:100vh; display:flex; }
+a { color: var(--primary); text-decoration:none; }
+
+/* Sidebar */
+.sidebar { width:220px; background:linear-gradient(180deg, #1e1b4b 0%, #312e81 100%); color:#fff; display:flex; flex-direction:column; position:fixed; top:0; left:0; bottom:0; z-index:10; }
+.sidebar-logo { padding:20px 16px 12px; }
+.sidebar-logo h2 { font-size:15px; font-weight:700; letter-spacing:-0.3px; }
+.sidebar-logo span { font-size:11px; opacity:.55; display:block; margin-top:2px; }
+.sidebar nav { flex:1; padding:8px; }
+.nav-item { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px; cursor:pointer; font-size:13.5px; font-weight:500; color:rgba(255,255,255,.65); transition:all .15s; margin-bottom:2px; }
+.nav-item:hover { background:rgba(255,255,255,.1); color:#fff; }
+.nav-item.active { background:rgba(255,255,255,.18); color:#fff; font-weight:600; }
+.nav-item svg { width:18px; height:18px; opacity:.7; flex-shrink:0; }
+.nav-item.active svg { opacity:1; }
+.sidebar-footer { padding:12px 16px; border-top:1px solid rgba(255,255,255,.1); font-size:11px; opacity:.45; }
+
+/* Main */
+.main { margin-left:220px; flex:1; display:flex; flex-direction:column; }
+.topbar { background:var(--surface); border-bottom:1px solid var(--border); padding:0 28px; height:56px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+.topbar h3 { font-size:16px; font-weight:600; }
+.topbar-right { display:flex; align-items:center; gap:16px; font-size:13px; color:var(--text2); }
+.ws-dot { width:8px; height:8px; border-radius:50%; }
+.ws-dot.on { background:var(--green); box-shadow:0 0 6px rgba(5,150,105,.4); }
+.ws-dot.off { background:var(--red); }
+.content { padding:24px 28px; flex:1; overflow-y:auto; }
+
+/* Cards */
+.card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
+.card-header { padding:16px 20px; border-bottom:1px solid var(--border); font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px; }
+.card-body { padding:20px; }
+.stat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
+.stat-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; box-shadow:var(--shadow); transition:box-shadow .2s; }
+.stat-card:hover { box-shadow:var(--shadow-md); }
+.stat-card .icon { width:36px; height:36px; border-radius:8px; display:flex; align-items:center; justify-content:center; margin-bottom:12px; }
+.stat-card .value { font-size:28px; font-weight:700; letter-spacing:-1px; line-height:1; }
+.stat-card .label { font-size:13px; color:var(--text2); margin-top:4px; }
+.grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+
+/* Badges */
+.badge { display:inline-flex; align-items:center; padding:2px 10px; border-radius:20px; font-size:11.5px; font-weight:600; letter-spacing:.3px; }
+.badge-p1 { background:var(--red-bg); color:var(--red); }
+.badge-p2 { background:var(--orange-bg); color:var(--orange); }
+.badge-p3 { background:var(--yellow-bg); color:var(--yellow); }
+.status-dot { display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:5px; }
+.s-running .status-dot { background:var(--green); animation:pulse2 1.5s infinite; }
+.s-queued .status-dot { background:var(--blue); }
+.s-error .status-dot { background:var(--red); }
+.s-vuln_found .status-dot { background:var(--orange); }
+.s-low_roi .status-dot { background:var(--gray); }
+.s-stopped .status-dot { background:#9ca3af; }
+@keyframes pulse2 { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+
+/* Create bar */
+.create-bar { display:flex; gap:10px; margin-bottom:20px; }
+.create-bar input, .create-bar select { padding:10px 14px; border:1px solid var(--border); border-radius:var(--radius); font-size:13px; background:var(--surface); transition:border-color .2s; }
+.create-bar input:focus, .create-bar select:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-light); }
+.create-bar input { flex:1; }
+.btn { padding:10px 20px; border-radius:var(--radius); font-size:13px; font-weight:600; cursor:pointer; border:none; transition:all .15s; }
+.btn-primary { background:var(--primary); color:#fff; }
+.btn-primary:hover { filter:brightness(1.1); }
+.btn-primary:disabled { opacity:.5; cursor:not-allowed; filter:none; }
+.btn-sm { padding:6px 12px; font-size:12px; }
+
+/* Table */
+.table-wrap { overflow-x:auto; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th { text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; border-bottom:2px solid var(--border); white-space:nowrap; }
+td { padding:10px 14px; border-bottom:1px solid var(--border); vertical-align:middle; }
+tr:hover td { background:var(--gray-bg); }
+
+/* Log viewer */
+.log-viewer { background:#1e1e2e; color:#cdd6f4; border-radius:var(--radius); padding:16px; height:460px; overflow-y:auto; font-family:'JetBrains Mono','Cascadia Code','Consolas',monospace; font-size:12.5px; line-height:1.7; }
+.log-viewer .text-line { color:#a6e3a1; }
+.log-viewer .tool-line { color:#f9e2af; padding:4px 0; display:flex; align-items:flex-start; gap:8px; }
+.log-viewer .tool-line::before { content:'⚡'; flex-shrink:0; font-size:10px; }
+.log-viewer .system-line { color:#6c7086; font-style:italic; }
+
+/* Report */
+.report-card { padding:20px; margin-bottom:12px; transition:box-shadow .2s; }
+.report-card:hover { box-shadow:var(--shadow-md); }
+.report-card .rc-header { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.report-card .rc-title { font-size:15px; font-weight:600; }
+.report-card .rc-meta { font-size:12px; color:var(--text2); display:flex; gap:16px; }
+
+/* Filters */
+.filter-bar { display:flex; gap:8px; margin-bottom:16px; }
+.filter-btn { padding:6px 14px; border-radius:20px; font-size:12px; font-weight:500; cursor:pointer; border:1px solid var(--border); background:var(--surface); color:var(--text2); transition:all .15s; }
+.filter-btn:hover { border-color:var(--primary); color:var(--primary); }
+.filter-btn.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+
+/* Empty state */
+.empty-state { text-align:center; padding:48px 20px; color:var(--text2); }
+.empty-state svg { width:48px; height:48px; opacity:.3; margin-bottom:12px; }
+.empty-state p { font-size:14px; }
+
+/* Back link */
+.back-link { display:inline-flex; align-items:center; gap:4px; font-size:13px; font-weight:500; color:var(--primary); cursor:pointer; margin-bottom:16px; }
+.back-link:hover { text-decoration:underline; }
+
+/* Responsive */
+@media (max-width:900px) {
+    .sidebar { width:60px; }
+    .sidebar .nav-item span, .sidebar-logo span, .sidebar-logo h2 { display:none; }
+    .sidebar-logo { text-align:center; padding:16px 8px; }
+    .main { margin-left:60px; }
+    .stat-grid { grid-template-columns:repeat(2,1fr); }
+    .grid-2 { grid-template-columns:1fr; }
+}
+</style>
 </head>
-<body class="bg-gray-950 text-gray-200 min-h-screen">
+<body>
+
 <div id="app">
-    <nav class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between">
-        <h1 class="text-lg font-bold text-blue-400">AI 漏洞挖掘系统 v2.0</h1>
-        <div class="flex gap-4 text-sm">
-            <button v-for="tab in tabs" :key="tab.id" @click="currentTab = tab.id"
-                    :class="currentTab === tab.id ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-200'"
-                    class="px-3 py-1 transition">{{ tab.label }}</button>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-logo">
+            <h2>🛡️ VulnScanner</h2>
+            <span>AI-Powered v2.0</span>
         </div>
-        <div class="flex items-center gap-3 text-sm">
-            <span class="text-gray-400">并发: {{ status.running }}/{{ status.maxConcurrency }}</span>
-            <span :class="wsConnected ? 'text-green-400' : 'text-red-400'">●</span>
+        <nav>
+            <div v-for="tab in navItems" :key="tab.id" @click="navigateTo(tab.id)"
+                 :class="['nav-item', currentTab === tab.id ? 'active' : '']">
+                <span v-html="tab.icon"></span>
+                <span>{{ tab.label }}</span>
+            </div>
+        </nav>
+        <div class="sidebar-footer">
+            模型: deepseek-v4-pro<br>
+            并发: {{ status.running }}/{{ status.maxConcurrency }}
         </div>
-    </nav>
+    </aside>
 
-    <!-- Dashboard -->
-    <div v-if="currentTab === 'dashboard'" class="p-6">
-        <div class="grid grid-cols-4 gap-4 mb-6">
-            <div v-for="card in dashboardCards" :key="card.label"
-                 class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-gray-400 text-sm">{{ card.label }}</div>
-                <div class="text-2xl font-bold mt-1" :class="card.color">{{ card.value }}</div>
+    <!-- Main Content -->
+    <div class="main">
+        <div class="topbar">
+            <h3>{{ currentPageTitle }}</h3>
+            <div class="topbar-right">
+                <span>{{ wsConnected ? '已连接' : '断开' }}</span>
+                <div :class="['ws-dot', wsConnected ? 'on' : 'off']"></div>
             </div>
         </div>
-        <div class="grid grid-cols-2 gap-4">
-            <div class="bg-gray-900 rounded-lg border border-gray-800 p-4">
-                <h3 class="text-sm font-semibold text-gray-400 mb-3">活动会话</h3>
-                <div v-if="activeSessions.length === 0" class="text-gray-600 text-sm">暂无</div>
-                <div v-for="s in activeSessions" :key="s.id" class="text-sm py-1 border-b border-gray-800 last:border-0 flex justify-between">
-                    <span>{{ s.id }} — {{ (s.target_url || '').substring(0,40) }}</span>
-                    <span :class="'status-' + s.status">{{ statusLabel(s.status) }}</span>
+
+        <div class="content">
+
+            <!-- ============ DASHBOARD ============ -->
+            <div v-if="currentTab === 'dashboard'">
+                <div class="stat-grid">
+                    <div class="stat-card">
+                        <div class="icon" style="background:var(--green-bg);">🔍</div>
+                        <div class="value" style="color:var(--green);">{{ status.running }}</div>
+                        <div class="label">运行中</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="icon" style="background:var(--blue-bg);">⏳</div>
+                        <div class="value" style="color:var(--blue);">{{ status.queued }}</div>
+                        <div class="label">排队中</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="icon" style="background:var(--primary-light);">📋</div>
+                        <div class="value" style="color:var(--primary);">{{ sessions.length }}</div>
+                        <div class="label">累计会话</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="icon" style="background:var(--orange-bg);">🐛</div>
+                        <div class="value" style="color:var(--orange);">{{ reports.length }}</div>
+                        <div class="label">漏洞报告</div>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-header">📡 活动会话</div>
+                        <div class="card-body">
+                            <div v-if="activeSessions.length === 0" class="empty-state">
+                                <p>暂无活跃会话</p>
+                            </div>
+                            <table v-else>
+                                <thead><tr><th>会话</th><th>目标</th><th>状态</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="s in activeSessions" :key="s.id" style="cursor:pointer" @click="navigateTo('detail', s.id)">
+                                        <td class="font-mono text-xs">{{ s.id }}</td>
+                                        <td>{{ (s.target_url || '').substring(0,35) }}</td>
+                                        <td :class="'s-' + s.status"><span class="status-dot"></span>{{ statusLabel(s.status) }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">⚠️ 最近漏洞</div>
+                        <div class="card-body">
+                            <div v-if="recentVulns.length === 0" class="empty-state">
+                                <p>暂无漏洞报告</p>
+                            </div>
+                            <div v-for="v in recentVulns" :key="v.id" style="padding:10px 0;border-bottom:1px solid var(--border);">
+                                <span :class="['badge', 'badge-' + (v.severity || 'p3').toLowerCase()]" style="margin-right:8px;">{{ v.severity }}</span>
+                                <span style="font-size:13px;font-weight:500;">{{ v.title }}</span>
+                                <div style="font-size:11px;color:var(--text2);margin-top:3px;">{{ v.target }} · {{ v.created_at }}</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="bg-gray-900 rounded-lg border border-gray-800 p-4">
-                <h3 class="text-sm font-semibold text-gray-400 mb-3">最近漏洞</h3>
-                <div v-if="recentVulns.length === 0" class="text-gray-600 text-sm">暂无</div>
-                <div v-for="v in recentVulns" :key="v.id" class="text-sm py-1 border-b border-gray-800 last:border-0">
-                    <span :class="'badge-' + v.severity">{{ v.severity }}</span>
-                    <span class="ml-2">{{ v.title }}</span>
+
+            <!-- ============ SESSIONS ============ -->
+            <div v-if="currentTab === 'sessions'">
+                <div class="create-bar">
+                    <input v-model="newTarget" @keydown.enter="createSession" placeholder="输入目标 URL，如 https://example.edu.cn" />
+                    <select v-model="newScenario">
+                        <option value="custom">custom</option>
+                        <option value="edu">edu</option>
+                        <option value="src">src</option>
+                    </select>
+                    <button class="btn btn-primary" @click="createSession" :disabled="!newTarget">
+                        + 新建会话
+                    </button>
+                </div>
+
+                <div class="card">
+                    <div class="card-body" style="padding:0;">
+                        <div class="table-wrap">
+                            <table>
+                                <thead><tr><th>ID</th><th>目标</th><th>场景</th><th>状态</th><th>优先级</th><th>创建时间</th><th>操作</th></tr></thead>
+                                <tbody>
+                                    <tr v-for="s in sessions" :key="s.id">
+                                        <td class="font-mono text-xs" style="font-weight:500;">{{ s.id }}</td>
+                                        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" :title="s.target_url">{{ s.target_url }}</td>
+                                        <td><span class="badge" style="background:var(--primary-light);color:var(--primary);">{{ s.scenario }}</span></td>
+                                        <td :class="'s-' + s.status"><span class="status-dot"></span>{{ statusLabel(s.status) }}</td>
+                                        <td class="text-xs">{{ s.priority }}</td>
+                                        <td class="text-xs" style="color:var(--text2);">{{ (s.created_at || '').substring(0,16) }}</td>
+                                        <td>
+                                            <button class="btn btn-sm" style="background:var(--primary-light);color:var(--primary);" @click="navigateTo('detail', s.id)">查看</button>
+                                            <button v-if="s.status==='running'" class="btn btn-sm" style="background:var(--red-bg);color:var(--red);margin-left:4px;" @click="stopSession(s.id)">停止</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div v-if="sessions.length === 0" class="empty-state">
+                            <p>暂无会话 · 在上方输入目标 URL 创建</p>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
-    </div>
 
-    <!-- Sessions -->
-    <div v-if="currentTab === 'sessions'" class="p-6">
-        <div class="flex gap-4 mb-4">
-            <input v-model="newTarget" @keydown.enter="createSession" placeholder="目标 URL"
-                   class="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
-            <select v-model="newScenario" class="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm">
-                <option value="custom">custom</option>
-                <option value="edu">edu</option>
-                <option value="src">src</option>
-            </select>
-            <button @click="createSession" :disabled="!newTarget"
-                    class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded text-sm font-medium transition">
-                创建会话
-            </button>
-        </div>
-        <div class="bg-gray-900 rounded-lg border border-gray-800">
-            <div class="grid grid-cols-7 gap-2 px-4 py-2 text-xs text-gray-400 border-b border-gray-800 font-semibold">
-                <span>ID</span><span>目标</span><span>场景</span><span>状态</span><span>轮次</span><span>创建时间</span><span>操作</span>
-            </div>
-            <div v-for="s in sessions" :key="s.id"
-                 class="grid grid-cols-7 gap-2 px-4 py-2 text-sm border-b border-gray-800 last:border-0 hover:bg-gray-850 items-center">
-                <span class="font-mono text-xs">{{ s.id }}</span>
-                <span class="truncate" :title="s.target_url">{{ (s.target_url || '').substring(0,30) }}</span>
-                <span class="text-xs">{{ s.scenario }}</span>
-                <span :class="'status-' + s.status">{{ statusLabel(s.status) }}</span>
-                <span class="text-xs text-gray-400">{{ s.turn_count || '-' }}</span>
-                <span class="text-xs text-gray-400">{{ (s.created_at || '').substring(0,16) }}</span>
-                <span>
-                    <button @click="viewSession(s.id)" class="text-blue-400 text-xs hover:underline mr-2">查看</button>
-                    <button v-if="s.status==='running'" @click="stopSession(s.id)" class="text-red-400 text-xs hover:underline">停止</button>
-                </span>
-            </div>
-        </div>
-        <div class="text-sm text-gray-500 mt-2">共 {{ sessions.length }} 条</div>
-    </div>
+            <!-- ============ SESSION DETAIL ============ -->
+            <div v-if="currentTab === 'detail'">
+                <div class="back-link" @click="currentTab='sessions'">← 返回会话列表</div>
 
-    <!-- Session Detail -->
-    <div v-if="currentTab === 'detail'" class="p-6">
-        <button @click="currentTab='sessions'" class="text-blue-400 text-sm mb-4 hover:underline">&larr; 返回列表</button>
-        <div class="bg-gray-900 rounded-lg border border-gray-800 p-4 mb-4">
-            <h3 class="text-sm font-semibold mb-2">会话 {{ (viewingSession || {}).id }}</h3>
-            <div class="text-xs text-gray-400">目标: {{ (viewingSession || {}).target_url }} | 场景: {{ (viewingSession || {}).scenario }}</div>
-        </div>
-        <div class="bg-black rounded-lg border border-gray-800 p-4 h-96 overflow-y-auto font-mono text-sm" ref="logContainer">
-            <div v-for="(line, i) in sessionLog" :key="i" class="log-line py-0.5">
-                <span v-if="line.type==='text'" class="text-green-400">{{ line.content }}</span>
-                <span v-else-if="line.type==='tool_call'" class="text-yellow-400">[tool: {{ line.name }}]</span>
-                <span v-else class="text-gray-500">{{ JSON.stringify(line) }}</span>
-            </div>
-            <div v-if="sessionLog.length === 0" class="text-gray-600">等待 AI 输出...</div>
-        </div>
-    </div>
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-body" style="display:flex;align-items:center;gap:16px;padding:16px 20px;">
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:600;">会话 {{ (viewingSession || {}).id }}</div>
+                            <div style="font-size:12px;color:var(--text2);margin-top:2px;">
+                                {{ (viewingSession || {}).target_url }} · {{ (viewingSession || {}).scenario }}
+                            </div>
+                        </div>
+                        <span :class="['badge', 'badge-' + ((viewingSession || {}).severity || 'p3')]" style="font-size:13px;">
+                            {{ statusLabel((viewingSession || {}).status) }}
+                        </span>
+                    </div>
+                </div>
 
-    <!-- Reports -->
-    <div v-if="currentTab === 'reports'" class="p-6">
-        <div class="flex gap-2 mb-4">
-            <button v-for="s in ['', 'P1', 'P2', 'P3']" :key="s"
-                    @click="reportFilter = s"
-                    :class="reportFilter===s ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'"
-                    class="px-3 py-1 rounded text-xs">{{ s || '全部' }}</button>
-        </div>
-        <div v-for="r in filteredReports" :key="r.id"
-             class="bg-gray-900 rounded-lg border border-gray-800 p-4 mb-3">
-            <div class="flex items-center gap-2 mb-2">
-                <span :class="'badge-' + r.severity">{{ r.severity }}</span>
-                <span class="font-semibold">{{ r.title }}</span>
+                <div class="card">
+                    <div class="card-header">🤖 AI 实时输出</div>
+                    <div class="card-body" style="padding:0;">
+                        <div class="log-viewer" ref="logContainer">
+                            <div v-if="sessionLog.length === 0" class="system-line">等待 AI 连接并开始输出...</div>
+                            <template v-for="(line, i) in sessionLog" :key="i">
+                                <div v-if="line.type === 'text'" class="text-line">{{ line.content }}</div>
+                                <div v-else-if="line.type === 'tool_call'" class="tool-line">{{ line.name }}</div>
+                                <div v-else class="system-line">[{{ line.type }}]</div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="text-xs text-gray-400">目标: {{ r.target }} | 类型: {{ r.type }} | {{ r.created_at }}</div>
-        </div>
-    </div>
 
-    <!-- Settings -->
-    <div v-if="currentTab === 'settings'" class="p-6 max-w-lg">
-        <div class="bg-gray-900 rounded-lg border border-gray-800 p-6">
-            <h3 class="text-sm font-semibold mb-4">系统配置</h3>
-            <div class="space-y-4">
-                <div><label class="text-xs text-gray-400">并发上限</label><input type="number" v-model="status.maxConcurrency" class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm mt-1"></div>
-                <div><label class="text-xs text-gray-400">模型</label><input type="text" value="deepseek-v4-pro" readonly class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm mt-1 text-gray-500"></div>
-                <div><label class="text-xs text-gray-400">通知邮箱</label><input type="text" value="3766177951@qq.com" readonly class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm mt-1 text-gray-500"></div>
+            <!-- ============ REPORTS ============ -->
+            <div v-if="currentTab === 'reports'">
+                <div class="filter-bar">
+                    <span v-for="s in ['', 'P1', 'P2', 'P3']" :key="s"
+                          @click="reportFilter = s"
+                          :class="['filter-btn', reportFilter === s ? 'active' : '']">{{ s || '全部' }}</span>
+                </div>
+
+                <div v-if="filteredReports.length === 0" class="empty-state">
+                    <p>暂无报告</p>
+                </div>
+
+                <div v-for="r in filteredReports" :key="r.id" class="card report-card">
+                    <div class="rc-header">
+                        <span :class="['badge', 'badge-' + (r.severity || 'p3').toLowerCase()]">{{ r.severity }}</span>
+                        <span class="rc-title">{{ r.title }}</span>
+                    </div>
+                    <div class="rc-meta">
+                        <span>🎯 {{ r.target }}</span>
+                        <span>📂 {{ r.type }}</span>
+                        <span>🕐 {{ r.created_at }}</span>
+                        <span>🔗 {{ r.session_id }}</span>
+                    </div>
+                </div>
             </div>
-        </div>
-    </div>
+
+        </div><!-- /content -->
+    </div><!-- /main -->
 </div>
 
 <script>
-const { createApp, ref, reactive, computed, onMounted, nextTick } = Vue;
+const { createApp, ref, reactive, computed, onMounted, onUnmounted, nextTick } = Vue;
 
 createApp({
     setup() {
-        const tabs = [
-            { id: 'dashboard', label: '仪表盘' },
-            { id: 'sessions', label: '会话' },
-            { id: 'detail', label: '详情' },
-            { id: 'reports', label: '报告' },
-            { id: 'settings', label: '设置' },
-        ];
         const currentTab = ref('dashboard');
         const wsConnected = ref(false);
         const status = reactive({ running: 0, queued: 0, maxConcurrency: 5 });
         const sessions = ref([]);
-        const activeSessions = computed(() => sessions.value.filter(s => s.status === 'running' || s.status === 'queued'));
         const reports = ref([]);
-        const recentVulns = computed(() => reports.value.filter(r => r.severity === 'P1' || r.severity === 'P2').slice(0, 5));
-        const reportFilter = ref('');
-        const filteredReports = computed(() => reportFilter.value ? reports.value.filter(r => r.severity === reportFilter.value) : reports.value);
         const newTarget = ref('');
         const newScenario = ref('custom');
         const viewingSession = ref(null);
+        const viewingSessionId = ref(null);
         const sessionLog = ref([]);
         const logContainer = ref(null);
-        let dashboardWs = null;
-        let sessionWs = null;
+        const reportFilter = ref('');
 
-        const statusLabel = (s) => ({ queued: '排队中', running: '运行中', vuln_found: '发现漏洞', low_roi: '无发现', need_input: '等待输入', error: '异常', stopped: '已停止' }[s] || s);
+        let dashboardWs = null, sessionWs = null;
 
-        const dashboardCards = computed(() => [
-            { label: '运行中', value: status.running, color: 'text-green-400' },
-            { label: '排队中', value: status.queued, color: 'text-blue-400' },
-            { label: '累计会话', value: sessions.value.length, color: 'text-gray-300' },
-            { label: '漏洞报告', value: reports.value.length, color: 'text-orange-400' },
-        ]);
+        const navItems = [
+            { id: 'dashboard', label: '仪表盘', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>' },
+            { id: 'sessions', label: '会话管理', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>' },
+            { id: 'detail', label: '实时监控', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' },
+            { id: 'reports', label: '漏洞报告', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' },
+        ];
+
+        const currentPageTitle = computed(() => {
+            const m = { dashboard:'仪表盘', sessions:'会话管理', detail:'会话详情', reports:'漏洞报告' };
+            return m[currentTab.value] || '';
+        });
+
+        const activeSessions = computed(() => sessions.value.filter(s => s.status === 'running' || s.status === 'queued'));
+        const recentVulns = computed(() => reports.value.filter(r => r.severity === 'P1' || r.severity === 'P2').slice(0, 8));
+        const filteredReports = computed(() => reportFilter.value ? reports.value.filter(r => r.severity === reportFilter.value) : reports.value);
+
+        const statusLabel = (s) => ({ queued:'排队中', running:'运行中', vuln_found:'发现漏洞', low_roi:'无发现', need_input:'等待输入', error:'异常', stopped:'已停止' }[s] || s || '-');
+
+        function navigateTo(tab, sessionId) {
+            currentTab.value = tab;
+            if (tab === 'detail' && sessionId) {
+                viewingSessionId.value = sessionId;
+                viewingSession.value = sessions.value.find(s => s.id === sessionId);
+                sessionLog.value = [];
+                connectSessionWs(sessionId);
+            }
+        }
 
         async function loadSessions() {
-            try { const res = await fetch('/api/sessions?limit=100'); const data = await res.json(); sessions.value = data.sessions || []; status.running = sessions.value.filter(s => s.status === 'running').length; status.queued = sessions.value.filter(s => s.status === 'queued').length; } catch(e) { console.log('loadSessions error:', e); }
+            try { const r = await fetch('/api/sessions?limit=200'); const d = await r.json(); sessions.value = d.sessions || []; status.running = sessions.value.filter(s => s.status === 'running').length; status.queued = sessions.value.filter(s => s.status === 'queued').length; } catch(e) {}
         }
 
         async function loadReports() {
-            try { const res = await fetch('/api/reports?limit=100'); const data = await res.json(); reports.value = data.reports || []; } catch(e) { console.log('loadReports error:', e); }
+            try { const r = await fetch('/api/reports?limit=200'); const d = await r.json(); reports.value = d.reports || []; } catch(e) {}
         }
 
         async function createSession() {
             if (!newTarget.value) return;
             try {
-                await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_url: newTarget.value, scenario: newScenario.value }) });
+                await fetch('/api/sessions', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ target_url:newTarget.value, scenario:newScenario.value }) });
                 newTarget.value = '';
                 await loadSessions();
-            } catch(e) { console.log('createSession error:', e); }
+            } catch(e) {}
         }
 
         async function stopSession(id) {
-            try { await fetch('/api/sessions/' + id + '/stop', { method: 'POST' }); await loadSessions(); } catch(e) { console.log('stopSession error:', e); }
+            try { await fetch('/api/sessions/'+id+'/stop', { method:'POST' }); await loadSessions(); } catch(e) {}
         }
 
-        function viewSession(id) {
-            viewingSession.value = sessions.value.find(s => s.id === id);
-            sessionLog.value = [];
-            currentTab.value = 'detail';
+        function connectSessionWs(id) {
             if (sessionWs) sessionWs.close();
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             sessionWs = new WebSocket(proto + '//' + location.host + '/ws/sessions/' + id + '/flow');
             sessionWs.onmessage = (e) => { sessionLog.value.push(JSON.parse(e.data)); nextTick(() => { if (logContainer.value) logContainer.value.scrollTop = logContainer.value.scrollHeight; }); };
-            sessionWs.onerror = () => { console.log('WS error'); };
         }
 
         function connectDashboard() {
+            if (dashboardWs) dashboardWs.close();
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             dashboardWs = new WebSocket(proto + '//' + location.host + '/ws/dashboard/overview');
             dashboardWs.onopen = () => { wsConnected.value = true; };
             dashboardWs.onclose = () => { wsConnected.value = false; setTimeout(connectDashboard, 3000); };
-            dashboardWs.onmessage = (e) => { const event = JSON.parse(e.data); if (event.type === 'session_started' || event.type === 'session_ended' || event.type === 'session_queued') { loadSessions(); loadReports(); } };
+            dashboardWs.onmessage = () => { loadSessions(); loadReports(); };
         }
 
         onMounted(() => { loadSessions(); loadReports(); connectDashboard(); });
+        onUnmounted(() => { if (dashboardWs) dashboardWs.close(); if (sessionWs) sessionWs.close(); });
 
-        return { tabs, currentTab, wsConnected, status, sessions, activeSessions, reports, recentVulns, reportFilter, filteredReports, newTarget, newScenario, viewingSession, sessionLog, logContainer, dashboardCards, statusLabel, createSession, stopSession, viewSession };
+        return { currentTab, wsConnected, status, sessions, reports, newTarget, newScenario, viewingSession, sessionLog, logContainer, reportFilter, navItems, currentPageTitle, activeSessions, recentVulns, filteredReports, statusLabel, navigateTo, createSession, stopSession, loadSessions };
     }
 }).mount('#app');
 </script>
