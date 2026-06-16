@@ -125,6 +125,42 @@ async def execute_discover(tool_args: dict[str, Any]) -> dict[str, Any]:
         return {"error": str(e)}
 
 
+async def execute_check_auth(tool_args: dict[str, Any]) -> dict[str, Any]:
+    """Check if current cookies/session are authenticated by probing a protected page."""
+    cookies = tool_args.get("cookies", "")
+    target = tool_args["target_base"]
+    test_path = tool_args.get("test_path", "/index.php")
+    try:
+        headers = {"Cookie": cookies} if cookies else {}
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            response = await client.get(f"{target.rstrip('/')}{test_path}", headers=headers)
+            redirected = response.status_code in (301, 302, 303, 307, 308)
+            location = response.headers.get("location", "")
+            body = response.text[:500].lower()
+            # Auth indicators
+            login_signs = ["login", "sign in", "密码", "用户名", "not logged in", "session expired"]
+            welcome_signs = ["welcome", "dashboard", "logout", "log out", "欢迎", "退出"]
+            redirects_to_login = redirected and any(kw in location.lower() for kw in ["login", "signin"])
+            has_login = any(kw in body for kw in login_signs)
+            has_welcome = any(kw in body for kw in welcome_signs)
+            if redirects_to_login:
+                ok, why = False, f"重定向到登录页: {location}"
+            elif has_login and not has_welcome:
+                ok, why = False, "页面仍含登录表单"
+            elif has_welcome:
+                ok, why = True, "含已登录标志"
+            elif redirected and "login" not in location.lower():
+                ok, why = True, f"重定向到: {location}"
+            elif response.status_code == 200 and not has_login:
+                ok, why = True, "正常访问受保护页面"
+            else:
+                ok, why = False, f"status={response.status_code}，假设未登录"
+            return {"authenticated": ok, "evidence": why, "status_code": response.status_code,
+                    "redirect": location if redirected else None, "test_url": f"{target}{test_path}"}
+    except Exception as e:
+        return {"authenticated": False, "evidence": f"请求失败: {e}"}
+
+
 async def execute_write_report(tool_args: dict[str, Any], report_dir: Path) -> dict[str, Any]:
     filename = tool_args["filename"]
     content = tool_args["content"]
@@ -150,6 +186,8 @@ async def execute_tool_call(
         result = await execute_curl(args)
     elif name == "discover_endpoints":
         result = await execute_discover(args)
+    elif name == "check_auth":
+        result = await execute_check_auth(args)
     elif name == "exec_shell":
         result = await execute_shell(args, temp_dir)
     elif name == "write_report":

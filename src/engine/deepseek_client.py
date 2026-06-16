@@ -56,6 +56,22 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "check_auth",
+            "description": "验证当前 session/cookie 是否已登录。登录后必须调用此工具确认，不要凭 HTML 内容手工判断。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_base": {"type": "string", "description": "目标基础 URL，如 http://example.com"},
+                    "cookies": {"type": "string", "description": "Cookie 字符串，如 PHPSESSID=xxx; security=low"},
+                    "test_path": {"type": "string", "default": "/index.php", "description": "用于验证登录状态的受保护路径"},
+                },
+                "required": ["target_base", "cookies"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "exec_shell",
             "description": "在沙箱临时目录内执行 shell 命令（仅允许 curl/wget/python/nslookup/dig 等网络测试工具）",
             "parameters": {
