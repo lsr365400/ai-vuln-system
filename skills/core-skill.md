@@ -36,6 +36,7 @@
 9. 20min 无进展 → 换方向
 10. 找到漏洞先写报告，继续测，不要停
 11. 30min 后 → 重读此卡
+11. 发现登录页先试默认密码，不暴力破解
 12. 报告必须有 curl/HTTP 请求
 13. PoC 必须可重现
 14. P3 以下不写报告
@@ -45,7 +46,8 @@
 18. 报的是结果，不是过程
 19. SQLi 必须出数据（库名/表名/行），仅报错不报
 20. 靶场默认凭据 ≠ 漏洞
-21. 同一根因 ≠ 多份报告
+21. 默认密码 ≠ 漏洞（除非能证明是生产系统）
+22. 同一根因 ≠ 多份报告
 19. RCE 确认即止（whoami/id），不拖库不读敏感文件
 
 ## 铁律 — 绝对禁止的操作
@@ -82,6 +84,24 @@
 - 无登录态：未授权 API、隐藏端点、无需认证的后台路径
 - 多角色/多租户：切换角色和租户 ID，检查数据隔离
 - SPA 应用：从 JS 文件中提取路由表、API 路径，寻找无需认证的端点
+
+### 默认密码速查（发现登录页优先尝试，不限定方法）
+
+| 框架/系统 | 常见默认凭据 |
+|-----------|-------------|
+| 若依 RuoYi | admin/admin123, ry/admin123 |
+| Spring Security | user/控制台生成, admin/admin |
+| Tomcat | tomcat/tomcat, admin/admin |
+| Weblogic | weblogic/welcome1, system/manager |
+| Nacos | nacos/nacos |
+| Jenkins | admin/password, admin/admin |
+| 教务系统 | admin/admin, admin/123456, sa/sa |
+| PHPMyAdmin | root/(空), root/root |
+| Redis | (无密码), foobared |
+| 通用 | admin/admin, admin/123456, admin/password, test/test, guest/guest |
+
+- **发现登录页 → 先用上述默认密码尝试**，10 秒内能确认是否有效
+- 不要暴力破解——试 3-5 组默认密码后无果就换方向
 
 ### 按技术栈关注点（方向提示，不限定方法）
 - **Java/Spring**: Actuator、JNDI、反序列化、SpEL、若依/Shiro 框架特征、Swagger/API 文档泄露
