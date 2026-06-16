@@ -48,7 +48,25 @@ async def run_session(
     project_id: str = "default",
     priority: int = 5,
 ) -> str:
+    """Legacy entry point: generates session_id and delegates to _run_session_with_id."""
     session_id = str(uuid.uuid4())[:8]
+    return await _run_session_with_id(
+        settings=settings, target_url=target_url, scenario=scenario,
+        project_id=project_id, priority=priority, session_id=session_id,
+        event_bus=None,
+    )
+
+
+async def _run_session_with_id(
+    settings: Settings,
+    target_url: str,
+    scenario: str = "custom",
+    project_id: str = "default",
+    priority: int = 5,
+    session_id: str = "",
+    event_bus=None,
+) -> str:
+    """Core session runner that accepts a pre-assigned session_id and optional EventBus."""
     temp_dir = await create_session_dir(session_id, settings.session_dir)
     report_dir = settings.report_dir
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +84,15 @@ async def run_session(
         report_dir=report_dir,
         started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     )
-    await insert_session(db, session)
+    try:
+        await insert_session(db, session)
+    except Exception:
+        # Session may already exist (e.g. scheduler path), update status to running
+        await db.execute(
+            "UPDATE sessions SET status='running', started_at=datetime('now') WHERE id=?",
+            (session_id,),
+        )
+        await db.commit()
 
     # ------------------------------------------------------------------
     # Load long-term memory and inject into system prompt
@@ -142,10 +168,14 @@ async def run_session(
                     if event["type"] == "text":
                         print(event["content"], end="", flush=True)
                         accumulated_text += event["content"]
+                        if event_bus:
+                            event_bus.publish(session_id, {"type": "text", "content": event["content"]})
 
                     elif event["type"] == "tool_call":
                         tc = event["tool_call"]
                         logger.info(f"[{session_id}] Tool call: {tc['function']['name']}")
+                        if event_bus:
+                            event_bus.publish(session_id, {"type": "tool_call", "name": tc["function"]["name"]})
 
                         result = await execute_tool_call(tc, temp_dir, report_dir)
 
