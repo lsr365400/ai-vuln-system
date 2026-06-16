@@ -55,6 +55,18 @@ CREATE TABLE IF NOT EXISTS tested_endpoints (
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS technique_effectiveness (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tech_stack      TEXT NOT NULL,
+    technique       TEXT NOT NULL,
+    outcome         TEXT NOT NULL,
+    count           INTEGER DEFAULT 1,
+    evidence        TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(tech_stack, technique)
+);
+
 CREATE TABLE IF NOT EXISTS failed_paths (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id      TEXT NOT NULL,
@@ -158,6 +170,75 @@ async def get_event_log(db: aiosqlite.Connection, session_id: str, limit: int = 
     rows = await cursor.fetchall()
     cols = [c[0] for c in cursor.description]
     return [dict(zip(cols, r)) for r in rows]
+
+
+async def record_technique(db: aiosqlite.Connection, tech_stack: str, technique: str,
+                          outcome: str, evidence: str = "") -> None:
+    """Record a technique outcome for cross-target learning. Upserts by tech_stack+technique."""
+    await db.execute(
+        """INSERT INTO technique_effectiveness (tech_stack, technique, outcome, evidence)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(tech_stack, technique) DO UPDATE SET
+           count = count + 1, outcome = excluded.outcome,
+           evidence = excluded.evidence, updated_at = datetime('now')""",
+        (tech_stack, technique, outcome, evidence[:500]),
+    )
+    await db.commit()
+
+
+async def get_effective_techniques(db: aiosqlite.Connection, tech_stack_hints: list[str]) -> list[dict]:
+    """Get techniques that worked for similar tech stacks. Hints are keywords like 'SafeLine', 'RuoYi'."""
+    results = []
+    seen = set()
+    for hint in tech_stack_hints[:5]:
+        hint = hint.strip()
+        if not hint or hint in seen:
+            continue
+        seen.add(hint)
+        cursor = await db.execute(
+            "SELECT tech_stack, technique, outcome, count, evidence FROM technique_effectiveness "
+            "WHERE tech_stack LIKE ? ORDER BY count DESC LIMIT 10",
+            (f"%{hint}%",),
+        )
+        rows = await cursor.fetchall()
+        cols = [c[0] for c in cursor.description]
+        for r in rows:
+            d = dict(zip(cols, r))
+            if d["technique"] not in seen:
+                results.append(d)
+                seen.add(d["technique"])
+    return results[:15]
+
+
+def generalize_tech_stack(target_profile: str) -> str:
+    """Extract a normalized tech stack signature for cross-target matching.
+    Example input: 'RuoYi v4.2, Spring Boot, SafeLine WAF, nginx'
+    Output: 'RuoYi v4 SpringBoot SafeLine nginx'
+    """
+    import re
+    markers = []
+    patterns = [
+        (r'RuoYi\s*v?(\d+\.?\d*)', 'RuoYi'),
+        (r'Spring\s*Boot', 'SpringBoot'),
+        (r'SafeLine', 'SafeLine'),
+        (r'Flask', 'Flask'),
+        (r'Django', 'Django'),
+        (r'Laravel', 'Laravel'),
+        (r'ThinkPHP', 'ThinkPHP'),
+        (r'nginx', 'nginx'),
+        (r'Apache', 'Apache'),
+        (r'Tomcat', 'Tomcat'),
+        (r'PHP\s*(\d+\.?\d*)', 'PHP'),
+        (r'Python\s*(\d+\.?\d*)', 'Python'),
+        (r'Java', 'Java'),
+        (r'jQuery', 'jQuery'),
+        (r'Vue\.?js|Vue\s*(\d)', 'Vue'),
+        (r'React', 'React'),
+    ]
+    for pattern, label in patterns:
+        if re.search(pattern, target_profile, re.IGNORECASE):
+            markers.append(label)
+    return ' '.join(dict.fromkeys(markers))  # dedup, keep order
 
 
 async def delete_session(db: aiosqlite.Connection, session_id: str) -> bool:

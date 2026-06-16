@@ -9,7 +9,7 @@ import aiosqlite
 
 from src.config import Settings
 from src.models import Session, SessionStatus
-from src.database import init_db, insert_session, update_session_status, insert_event_log, track_endpoint, get_tested_endpoints, get_tested_urls, track_failed_path, get_failed_paths
+from src.database import init_db, insert_session, update_session_status, insert_event_log, track_endpoint, get_tested_endpoints, get_tested_urls, track_failed_path, get_failed_paths, get_effective_techniques, record_technique, generalize_tech_stack
 from src.engine.prompt_builder import build_system_prompt
 from src.engine.deepseek_client import DeepSeekClient
 from src.engine.tool_executor import execute_tool_call
@@ -131,6 +131,21 @@ async def _run_session_with_id(
         system_prompt += (
             "\n\n## ⛔ 已确认无效的攻击路径（优先阅读，不要重复！）\n\n"
             + failed_text + "\n"
+        )
+
+    # Cross-target experience: query effective techniques for similar tech stacks
+    # Use basic recon hints — exact tech stack comes from the AI during testing
+    tech_hints = ["RuoYi", "SpringBoot", "SafeLine", "nginx", "Flask", "Django",
+                  "PHP", "Java", "Python", "Laravel", "ThinkPHP", "Tomcat"]
+    effective = await get_effective_techniques(db, tech_hints)
+    if effective:
+        success_lines = "\n".join(
+            f"- ✅ **{e['technique']}** → {e['outcome']} (已验证 {e['count']} 次, 技术栈: {e['tech_stack']})"
+            for e in effective[:8]
+        )
+        system_prompt += (
+            "\n\n## 🧠 跨目标经验（已验证有效的技术，优先尝试）\n\n"
+            + success_lines + "\n"
         )
 
     # ------------------------------------------------------------------
@@ -311,6 +326,24 @@ async def _run_session_with_id(
     # ------------------------------------------------------------------
     if final_status is None:
         final_status = _determine_status(status_marker, report_dir, session_id)
+
+    # Record cross-target technique effectiveness
+    try:
+        profile_body = _build_target_profile(target_url, session_id, messages)
+        tech_sig = generalize_tech_stack(profile_body)
+        if tech_sig:
+            # Record findings as effective
+            for f in sorted(report_dir.glob(f"{session_id}__*.md")):
+                if f.stat().st_size >= 200:
+                    text = f.read_text(encoding="utf-8")
+                    title = _extract_title(text) or f.stem
+                    await record_technique(db, tech_sig, f"发现: {title}", "success", text[:300])
+            # Record WAF/403 blocks as ineffective
+            failed = await get_failed_paths(db, host)
+            for f in failed[:5]:
+                await record_technique(db, tech_sig, f"WAF拦截: {f['reason']}", "blocked", "")
+    except Exception as e:
+        logger.warning("technique recording failed: %s", e)
 
     # Save progress snapshot
     try:
