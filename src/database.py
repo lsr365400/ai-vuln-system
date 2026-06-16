@@ -75,3 +75,45 @@ async def update_session_status(db: aiosqlite.Connection, session_id: str, statu
             (status, error_msg, session_id),
         )
     await db.commit()
+
+
+async def list_sessions(db: aiosqlite.Connection, limit: int = 50, offset: int = 0,
+                        status: str | None = None, project_id: str | None = None) -> list[dict]:
+    query = "SELECT * FROM sessions WHERE 1=1"
+    params = []
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+    if project_id:
+        query += " AND project_id = ?"
+        params.append(project_id)
+    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    cursor = await db.execute(query, params)
+    rows = await cursor.fetchall()
+    cols = [c[0] for c in cursor.description]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+async def get_session(db: aiosqlite.Connection, session_id: str) -> dict | None:
+    cursor = await db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
+    row = await cursor.fetchone()
+    if not row:
+        return None
+    cols = [c[0] for c in cursor.description]
+    return dict(zip(cols, row))
+
+
+async def list_reports(db: aiosqlite.Connection, limit: int = 50, offset: int = 0,
+                       severity: str | None = None) -> list[dict]:
+    query = "SELECT * FROM reports WHERE 1=1"
+    params = []
+    if severity:
+        query += " AND severity = ?"
+        params.append(severity)
+    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    cursor = await db.execute(query, params)
+    rows = await cursor.fetchall()
+    cols = [c[0] for c in cursor.description]
+    return [dict(zip(cols, r)) for r in rows]
