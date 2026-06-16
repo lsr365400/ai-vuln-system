@@ -138,6 +138,27 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "brute_force",
+            "description": "用 ffuf 对登录接口进行密码爆破。字典默认 rockyou.txt。仅限授权测试/CTF 使用，edu 场景禁止。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "登录接口 URL"},
+                    "username": {"type": "string", "default": "admin", "description": "用户名"},
+                    "password_field": {"type": "string", "default": "password", "description": "密码字段名"},
+                    "username_field": {"type": "string", "default": "username", "description": "用户名字段名"},
+                    "wordlist": {"type": "string", "default": "/usr/share/wordlists/rockyou.txt", "description": "字典文件路径"},
+                    "success_keyword": {"type": "string", "default": "login_success", "description": "登录成功的响应关键词"},
+                    "success_code": {"type": "integer", "default": 302, "description": "登录成功的 HTTP 状态码"},
+                    "max_words": {"type": "integer", "default": 200, "description": "响应最大字数限制"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "exec_shell",
             "description": "在沙箱临时目录执行命令（支持管道、脚本、批量枚举。危险性由系统拦截层保障，放心使用）",
             "parameters": {

