@@ -118,26 +118,20 @@ async def _run_session_with_id(
         system_prompt += memory_header + memory_context
         logger.info("[%s] 注入了长期记忆 (%d chars)", session_id, len(memory_context))
 
-    # Inject already-tested URLs and failed paths
+    # Inject failed paths only (not every tested URL — too noisy)
     from urllib.parse import urlparse
     host = urlparse(target_url).netloc or target_url
-    tested_urls = await get_tested_urls(db, host)
-    if tested_urls:
-        urls_text = "\n".join(f"- {u}" for u in tested_urls[:30])
-        system_prompt += f"\n\n## 已测试端点（本会话，不要重复测试相同路径）\n\n{urls_text}"
 
     failed = await get_failed_paths(db, host)
     if failed:
         failed_text = "\n".join(
             f"- **{f['technique']}**: {f['reason']}"
-            f" (payload: `{f['payload_short'][:60]}`)" if f.get('payload_short') else ""
-            for f in failed[:20]
+            for f in failed[:10]
         )
-        failed_header = (
+        system_prompt += (
             "\n\n## ⛔ 已确认无效的攻击路径（优先阅读，不要重复！）\n\n"
-            "以下路径在上次测试中已被确认不存在漏洞或被 WAF 封杀。不要浪费时间重复尝试：\n\n"
+            + failed_text + "\n"
         )
-        system_prompt += failed_header + failed_text
 
     # ------------------------------------------------------------------
     # Main loop
@@ -231,11 +225,12 @@ async def _run_session_with_id(
                                 })
                                 result["content"] += f"\n[AUTO] 登录检测: authenticated={auth_result['authenticated']}, {auth_result['evidence']}"
 
-                        # Track endpoints for curl/discover calls
+                        # Track endpoints for curl/discover calls (skip static assets)
                         if tc["function"]["name"] in ("curl_http", "discover_endpoints"):
                             args = tc["function"].get("arguments_parsed", {})
                             tracked_url = args.get("url", "")
-                            if tracked_url:
+                            if tracked_url and not any(tracked_url.endswith(ext) for ext in
+                                    (".js", ".css", ".png", ".jpg", ".ico", ".svg", ".woff", ".ttf")):
                                 tracked_method = args.get("method", "GET") if tc["function"]["name"] == "curl_http" else "GET"
                                 await track_endpoint(db, session_id, tracked_url, tracked_method)
                             # Auto-track failures (403=WAF, 500=error, empty=dead end)
