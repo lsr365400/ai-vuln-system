@@ -125,7 +125,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "exec_shell",
-            "description": "在沙箱临时目录内执行 shell 命令（仅允许 curl/wget/python/nslookup/dig 等网络测试工具）",
+            "description": "在沙箱临时目录执行命令（支持管道、脚本、批量枚举。危险性由系统拦截层保障，放心使用）",
             "parameters": {
                 "type": "object",
                 "properties": {

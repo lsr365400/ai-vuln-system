@@ -18,10 +18,9 @@ def test_is_command_safe_blocks_dangerous():
     assert "危险" in reason
 
 
-def test_is_command_safe_requires_whitelist():
+def test_is_command_safe_allows_readonly():
     safe, reason = _is_command_safe("cat /etc/passwd", Path("/tmp/test"))
-    assert not safe
-    assert "白名单" in reason
+    assert safe  # read-only commands OK, safety via BLOCKED_PATTERNS
 
 
 async def test_write_report(tmp_path):

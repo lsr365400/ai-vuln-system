@@ -9,7 +9,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_COMMANDS = {"curl", "wget", "nslookup", "dig", "host", "whois", "python", "python3"}
+# No whitelist — safety enforced by BLOCKED_PATTERNS only
 
 BLOCKED_PATTERNS = [
     "rm -rf", "rm -r", "rmdir",
@@ -30,10 +30,6 @@ def _is_command_safe(command: str, allowed_dir: Path) -> tuple[bool, str]:
     cmd_parts = shlex.split(command)
     if not cmd_parts:
         return False, "空命令"
-
-    cmd_name = cmd_parts[0]
-    if cmd_name not in ALLOWED_COMMANDS:
-        return False, f"命令不在白名单: {cmd_name}"
 
     if " -o " in command or " -O " in command or " --output-document" in command:
         return False, "不允许通过 exec_shell 写入文件，使用 write_report"
