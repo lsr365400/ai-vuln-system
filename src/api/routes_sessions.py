@@ -63,13 +63,13 @@ async def create_session(req: CreateSessionRequest, request: Request):
     return {"session_id": session_id, "status": "queued"}
 
 
-async def _run_session_wrapper(settings, target_url, scenario, project_id, session_id, db, event_bus, **kwargs):
+async def _run_session_wrapper(settings, target_url, scenario, project_id, session_id, db, event_bus, user_input="", **kwargs):
     event_bus.publish_global("session_started", {"session_id": session_id})
     from src.engine.session import _run_session_with_id
     status = await _run_session_with_id(
         settings=settings, target_url=target_url, scenario=scenario,
         project_id=project_id, session_id=session_id,
-        event_bus=event_bus,
+        event_bus=event_bus, user_input=user_input,
     )
     event_bus.publish_global("session_ended", {"session_id": session_id, "status": status})
     return status
@@ -93,6 +93,47 @@ async def get_session_api(session_id: str, request: Request):
 async def get_session_events(session_id: str, request: Request, limit: int = 500):
     events = await get_event_log(request.app.state.db, session_id, limit=limit)
     return {"events": events, "total": len(events)}
+
+
+@router.post("/{session_id}/input")
+async def send_session_input(session_id: str, request: Request):
+    from pydantic import BaseModel
+    class InputRequest(BaseModel):
+        message: str
+    data = await request.json()
+    message = data.get("message", "")
+    if not message:
+        raise HTTPException(400, "message required")
+    # Store input and restart session
+    await request.app.state.db.execute(
+        "UPDATE sessions SET status='queued', error_msg=NULL WHERE id=?",
+        (session_id,),
+    )
+    await request.app.state.db.commit()
+    # Re-enqueue with input context
+    from src.scheduler import SessionTask
+    from src.database import get_session
+    s = await get_session(request.app.state.db, session_id)
+    if s:
+        task = SessionTask(
+            priority=-s.get("priority", 5),
+            session_id=session_id,
+            project_id=s.get("project_id", "default"),
+            target_url=s.get("target_url", ""),
+            run_func=_run_session_wrapper,
+            kwargs={
+                "settings": request.app.state.settings,
+                "target_url": s["target_url"],
+                "scenario": s.get("scenario", "custom"),
+                "project_id": s.get("project_id", "default"),
+                "session_id": session_id,
+                "db": request.app.state.db,
+                "event_bus": request.app.state.event_bus,
+                "user_input": message,
+            },
+        )
+        request.app.state.scheduler.enqueue(task)
+    return {"ack": "input received", "session_restarted": True}
 
 
 @router.post("/{session_id}/stop")

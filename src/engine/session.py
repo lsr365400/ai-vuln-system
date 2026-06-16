@@ -67,6 +67,7 @@ async def _run_session_with_id(
     priority: int = 5,
     session_id: str = "",
     event_bus=None,
+    user_input: str = "",
 ) -> str:
     """Core session runner that accepts a pre-assigned session_id and optional EventBus."""
     temp_dir = await create_session_dir(session_id, settings.session_dir)
@@ -110,6 +111,9 @@ async def _run_session_with_id(
         temp_dir=temp_dir,
         report_dir=report_dir,
     )
+
+    if user_input:
+        system_prompt += f"\n\n## 用户指令\n\n用户说：{user_input}\n\n根据用户指引继续测试。"
 
     if memory_context:
         memory_header = (
