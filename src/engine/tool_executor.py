@@ -256,6 +256,38 @@ async def execute_brute_force(tool_args: dict[str, Any], temp_dir: Path) -> dict
         return {"error": str(e)}
 
 
+async def execute_sourcemap_parse(tool_args: dict[str, Any], temp_dir: Path) -> dict[str, Any]:
+    """Download and parse a .js.map SourceMap file to extract original source code."""
+    url = tool_args["url"]
+    filter_keyword = tool_args.get("filter", "")
+    try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return {"error": f"Download failed ({resp.status_code})"}
+            map_file = temp_dir / "source.map"
+            map_file.write_bytes(resp.content)
+
+        proc = await asyncio.create_subprocess_exec(
+            "node", "tools/sourcemap-parser.js", str(map_file), filter_keyword,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        output = stdout.decode("utf-8", errors="replace")
+
+        source_count = output.count("=== Source Files ===")
+        api_hints = [l.strip() for l in output.split("\n") if "api" in l.lower() or "router" in l.lower() or "auth" in l.lower()]
+
+        return {
+            "sources_found": source_count,
+            "api_hints": api_hints[:20],
+            "output": output[:6000],
+            "full_size": len(resp.content),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 async def execute_write_report(tool_args: dict[str, Any], report_dir: Path) -> dict[str, Any]:
     filename = tool_args["filename"]
     content = tool_args["content"]
@@ -295,6 +327,8 @@ async def execute_tool_call(
         result = await execute_analyze_js(args, temp_dir)
     elif name == "brute_force":
         result = await execute_brute_force(args, temp_dir)
+    elif name == "analyze_sourcemap":
+        result = await execute_sourcemap_parse(args, temp_dir)
     elif name == "finish_session":
         result = {"acknowledged": True, "status": args.get("status", "UNKNOWN")}
     else:

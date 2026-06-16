@@ -159,6 +159,21 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "analyze_sourcemap",
+            "description": "下载并解析 .js.map SourceMap 文件，提取所有原始源代码文件路径、API 路由、认证逻辑。发现 .map 文件立即调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "SourceMap URL，如 /static/js/app.js.map"},
+                    "filter": {"type": "string", "default": "", "description": "可选，只显示路径包含此关键字的文件（如 api/router/auth）"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "exec_shell",
             "description": "在沙箱临时目录执行命令（支持管道、脚本、批量枚举。危险性由系统拦截层保障，放心使用）",
             "parameters": {
