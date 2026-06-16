@@ -75,7 +75,10 @@ async def browser_navigate(session_id: str, temp_dir: Path, args: dict) -> dict:
         form_actions = await page.eval_on_selector_all("form[action]", "els => els.map(e => e.action)")
         scripts = await page.eval_on_selector_all("script[src]", "els => els.map(e => e.src)")
         # Check for login form presence
-        has_login_form = await page.eval_on_selector("form input[type=password]", "e => !!e").catch(lambda: False)
+        try:
+            has_login_form = await page.eval_on_selector("form input[type=password]", "e => !!e") or False
+        except Exception:
+            has_login_form = False
 
         return {
             "url": url_final,
@@ -124,7 +127,10 @@ async def browser_login(session_id: str, temp_dir: Path, args: dict) -> dict:
         redirect_away = current_url != login_url and "login" not in current_url.lower()
         has_logout = "logout" in html.lower() or "退出" in html
         has_welcome = "welcome" in html.lower() or "欢迎" in html.lower() or "dashboard" in html.lower()
-        has_login_form = await page.eval_on_selector("form input[type=password]", "e => !!e").catch(lambda: False)
+        try:
+            has_login_form = await page.eval_on_selector("form input[type=password]", "e => !!e") or False
+        except Exception:
+            has_login_form = False
 
         authenticated = (redirect_away and (has_logout or has_welcome)) or (has_welcome and not has_login_form)
 
