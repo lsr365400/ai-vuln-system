@@ -415,7 +415,16 @@ createApp({
             if (sessionWs) sessionWs.close();
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             sessionWs = new WebSocket(proto + '//' + location.host + '/ws/sessions/' + id + '/flow');
-            sessionWs.onmessage = (e) => { sessionLog.value.push(JSON.parse(e.data)); nextTick(() => { if (logContainer.value) logContainer.value.scrollTop = logContainer.value.scrollHeight; }); };
+            sessionWs.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                const last = sessionLog.value.length > 0 ? sessionLog.value[sessionLog.value.length - 1] : null;
+                if (data.type === 'text' && last && last.type === 'text') {
+                    last.content += data.content;
+                } else {
+                    sessionLog.value.push(data);
+                }
+                nextTick(() => { if (logContainer.value) logContainer.value.scrollTop = logContainer.value.scrollHeight; });
+            };
         }
 
         function connectDashboard() {
