@@ -107,6 +107,7 @@
 ## 测试执行规范
 
 - **每次登录后必须用 check_auth 工具验证**——不要凭 HTML 内容、状态码或 Location header 手工判断登录是否成功。check_auth 返回 {"authenticated": true/false, "evidence": "..."}，以它为准
+- **发现 JS 文件先用 analyze_js 分析**——它能提取路由表、API 路径、密钥。不要肉眼读 JS，先让工具跑一遍再决定深入哪个方向
 - 每个请求输出完整的 curl 命令以便复现
 - 发现可疑点先验证再深入，不要发散
 - 测试时使用明显不存在的测试数据（如 test_user_nonexist_12345）
