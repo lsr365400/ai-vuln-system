@@ -135,3 +135,15 @@ async def get_event_log(db: aiosqlite.Connection, session_id: str, limit: int = 
     rows = await cursor.fetchall()
     cols = [c[0] for c in cursor.description]
     return [dict(zip(cols, r)) for r in rows]
+
+
+async def delete_session(db: aiosqlite.Connection, session_id: str) -> bool:
+    """Delete a session and its associated data. Returns True if deleted."""
+    cursor = await db.execute("SELECT id FROM sessions WHERE id = ?", (session_id,))
+    if not await cursor.fetchone():
+        return False
+    await db.execute("DELETE FROM event_log WHERE session_id = ?", (session_id,))
+    await db.execute("DELETE FROM reports WHERE session_id = ?", (session_id,))
+    await db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+    await db.commit()
+    return True

@@ -267,6 +267,7 @@ tr:hover td { background:var(--gray-bg); }
                                         <td>
                                             <button class="btn btn-sm" style="background:var(--primary-light);color:var(--primary);" @click="navigateTo('detail', s.id)">查看</button>
                                             <button v-if="s.status==='running'" class="btn btn-sm" style="background:var(--red-bg);color:var(--red);margin-left:4px;" @click="stopSession(s.id)">停止</button>
+                                            <button v-if="s.status!=='running'" class="btn btn-sm" style="background:#f9fafb;color:#9ca3af;margin-left:4px;" @click="deleteSession(s.id)">删除</button>
                                         </td>
                                     </tr>
                                 </tbody>
@@ -411,6 +412,11 @@ createApp({
             try { await fetch('/api/sessions/'+id+'/stop', { method:'POST' }); await loadSessions(); } catch(e) {}
         }
 
+        async function deleteSession(id) {
+            if (!confirm('删除会话 ' + id + ' 及其所有日志和报告？')) return;
+            try { await fetch('/api/sessions/'+id, { method:'DELETE' }); await loadSessions(); } catch(e) {}
+        }
+
         function connectSessionWs(id) {
             if (sessionWs) sessionWs.close();
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -439,7 +445,7 @@ createApp({
         onMounted(() => { loadSessions(); loadReports(); connectDashboard(); });
         onUnmounted(() => { if (dashboardWs) dashboardWs.close(); if (sessionWs) sessionWs.close(); });
 
-        return { currentTab, wsConnected, status, sessions, reports, newTarget, newScenario, viewingSession, sessionLog, logContainer, reportFilter, navItems, currentPageTitle, activeSessions, recentVulns, filteredReports, statusLabel, navigateTo, createSession, stopSession, loadSessions };
+        return { currentTab, wsConnected, status, sessions, reports, newTarget, newScenario, viewingSession, sessionLog, logContainer, reportFilter, navItems, currentPageTitle, activeSessions, recentVulns, filteredReports, statusLabel, navigateTo, createSession, stopSession, deleteSession, loadSessions };
     }
 }).mount('#app');
 </script>

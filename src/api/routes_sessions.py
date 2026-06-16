@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel
 
 from src.models import Session, SessionStatus
-from src.database import insert_session, update_session_status, get_session, list_sessions, get_event_log
+from src.database import insert_session, update_session_status, get_session, list_sessions, get_event_log, delete_session
 from src.scheduler import SessionTask
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -101,3 +101,11 @@ async def stop_session_api(session_id: str, request: Request):
     if ok:
         await update_session_status(request.app.state.db, session_id, "stopped")
     return {"stopped": ok}
+
+
+@router.delete("/{session_id}")
+async def delete_session_api(session_id: str, request: Request):
+    ok = await delete_session(request.app.state.db, session_id)
+    if not ok:
+        raise HTTPException(404, "Session not found")
+    return {"deleted": True}
