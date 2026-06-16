@@ -25,6 +25,7 @@ async def create_session(req: CreateSessionRequest, request: Request):
     scheduler = request.app.state.scheduler
     event_bus = request.app.state.event_bus
 
+    clean_url = req.target_url.strip().rstrip("/")
     from src.engine.session import create_session_dir
     temp_dir = await create_session_dir(session_id, settings.session_dir)
 
@@ -32,7 +33,7 @@ async def create_session(req: CreateSessionRequest, request: Request):
         id=session_id,
         project_id=req.project_id,
         scenario=req.scenario,
-        target_url=req.target_url,
+        target_url=clean_url,
         status=SessionStatus.QUEUED,
         priority=req.priority,
         temp_dir=temp_dir,
@@ -44,11 +45,11 @@ async def create_session(req: CreateSessionRequest, request: Request):
         priority=-req.priority,
         session_id=session_id,
         project_id=req.project_id,
-        target_url=req.target_url,
+        target_url=clean_url,
         run_func=_run_session_wrapper,
         kwargs={
             "settings": settings,
-            "target_url": req.target_url,
+            "target_url": clean_url,
             "scenario": req.scenario,
             "project_id": req.project_id,
             "session_id": session_id,
@@ -57,7 +58,7 @@ async def create_session(req: CreateSessionRequest, request: Request):
         },
     )
     scheduler.enqueue(task)
-    event_bus.publish_global("session_queued", {"session_id": session_id, "target": req.target_url})
+    event_bus.publish_global("session_queued", {"session_id": session_id, "target": clean_url})
 
     return {"session_id": session_id, "status": "queued"}
 
