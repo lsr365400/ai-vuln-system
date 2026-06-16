@@ -17,6 +17,7 @@ from src.engine.memory.hermes_store import HermesStore
 from src.engine.memory.compressor import should_compress, compress_messages, estimate_tokens
 from src.engine.report_indexer import index_all_reports
 from src.safety.disk_guard import DiskGuard
+from src.engine.browser_tool import cleanup_context
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,25 @@ async def _run_session_with_id(
                             event_bus.publish(session_id, {"type": "tool_call", "name": tc["function"]["name"]})
                         await insert_event_log(db, session_id, "tool_call", tc["function"]["name"])
 
-                        result = await execute_tool_call(tc, temp_dir, report_dir)
+                        result = await execute_tool_call(tc, temp_dir, report_dir, session_id=session_id)
+
+                        # Auto-detect login attempts and inject auth status
+                        if tc["function"]["name"] == "curl_http":
+                            args = tc["function"].get("arguments_parsed", {})
+                            body = str(args.get("body", "")).lower()
+                            url = str(args.get("url", ""))
+                            method = str(args.get("method", "GET")).upper()
+                            cookies = str(args.get("headers", {}).get("Cookie", ""))
+                            is_login = (method == "POST" and any(kw in url.lower() + body
+                                for kw in ["login", "signin", "登录", "username", "password"]))
+                            if is_login and cookies:
+                                from urllib.parse import urlparse
+                                from src.engine.tool_executor import execute_check_auth
+                                base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+                                auth_result = await execute_check_auth({
+                                    "target_base": base, "cookies": cookies,
+                                })
+                                result["content"] += f"\n[AUTO] 登录检测: authenticated={auth_result['authenticated']}, {auth_result['evidence']}"
 
                         # Track endpoints for curl/discover calls
                         if tc["function"]["name"] in ("curl_http", "discover_endpoints"):
@@ -294,6 +313,8 @@ async def _run_session_with_id(
     except Exception as e:
         logger.warning("[%s] 记忆保存失败: %s", session_id, e)
 
+    # Cleanup browser context
+    await cleanup_context(session_id)
     await _finalize_session(settings.database_path, session_id, final_status)
     return final_status
 

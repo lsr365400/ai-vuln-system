@@ -59,11 +59,16 @@ async def execute_curl(tool_args: dict[str, Any], timeout: int = 30) -> dict[str
             urls = re.findall(r'(?:href|src|action)=["\']([^"\']+)["\']', response.text, re.I)
             urls += re.findall(r'https?://[^\s"\'<>]{3,}', response.text)
             urls = list(dict.fromkeys(urls))  # dedup, keep order
+            # Save full response body (no truncation per design guide Ch8)
+            body_path = None
+            if len(response.text) > 2000:
+                import tempfile
+                body_path = str(tempfile.mktemp(suffix=".html", dir=str(temp_dir.parent)))
+                Path(body_path).write_text(response.text, encoding="utf-8")
             return {
                 "status_code": response.status_code,
                 "headers": dict(response.headers),
-                "body": response.text[:8000],
-                "body_preview": response.text[:500],
+                "body": response.text[:2000] + (f" [truncated, full body:{body_path}]" if body_path else ""),
                 "body_length": len(response.text),
                 "content_type": response.headers.get("content-type", ""),
                 "urls_found": urls[:30],
@@ -178,11 +183,15 @@ async def execute_tool_call(
     tool_call: dict,
     temp_dir: Path,
     report_dir: Path,
+    session_id: str = "",
 ) -> dict[str, Any]:
     name = tool_call["function"]["name"]
     args = tool_call["function"].get("arguments_parsed", {})
 
-    if name == "curl_http":
+    if name in ("browser_navigate", "browser_login", "browser_extract"):
+        from src.engine.browser_tool import execute_browser_tool
+        return await execute_browser_tool(session_id, temp_dir, tool_call)
+    elif name == "curl_http":
         result = await execute_curl(args)
     elif name == "discover_endpoints":
         result = await execute_discover(args)
