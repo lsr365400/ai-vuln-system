@@ -19,8 +19,25 @@ async def _get_browser():
     global _browser, _playwright
     if _browser is None:
         from playwright.async_api import async_playwright
+        import os
         _playwright = await async_playwright().start()
-        _browser = await _playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+        # Try system chromium paths (no CDN download needed)
+        system_chrome = ""
+        for candidate in [
+            os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", ""),
+            "/snap/chromium/3459/usr/lib/chromium-browser/chrome",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+            "/snap/bin/chromium",
+        ]:
+            if candidate and Path(candidate).exists():
+                system_chrome = candidate
+                break
+        launch_args = {"headless": True, "args": ["--no-sandbox", "--disable-gpu"]}
+        if system_chrome:
+            launch_args["executable_path"] = system_chrome
+            logger.info("using system chromium: %s", system_chrome)
+        _browser = await _playwright.chromium.launch(**launch_args)
         logger.info("playwright browser launched")
     return _browser
 

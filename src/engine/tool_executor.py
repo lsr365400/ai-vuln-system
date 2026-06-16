@@ -41,43 +41,60 @@ def _is_command_safe(command: str, allowed_dir: Path) -> tuple[bool, str]:
     return True, ""
 
 
-async def execute_curl(tool_args: dict[str, Any], timeout: int = 30) -> dict[str, Any]:
+async def execute_curl(tool_args: dict[str, Any], timeout: int = 30,
+                       session_id: str = "", temp_dir: Path = None) -> dict[str, Any]:
     url = tool_args["url"]
     method = tool_args.get("method", "GET").upper()
     headers = tool_args.get("headers", {})
     body = tool_args.get("body")
 
+    # Use persistent cookie jar per session (cookies survive across curl calls)
+    import json as _json
+    if session_id and temp_dir:
+        cookie_file = temp_dir / "cookies.json"
+        saved_cookies = {}
+        if cookie_file.exists():
+            try: saved_cookies = _json.loads(cookie_file.read_text())
+            except Exception: pass
+        client = httpx.AsyncClient(timeout=timeout, follow_redirects=False, cookies=saved_cookies)
+    else:
+        client = httpx.AsyncClient(timeout=timeout, follow_redirects=False)
+        cookie_file = None
+
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-            response = await client.request(
-                method=method,
-                url=url,
-                headers=headers,
-                content=body,
-            )
-            # Extract URLs from body for endpoint discovery
-            urls = re.findall(r'(?:href|src|action)=["\']([^"\']+)["\']', response.text, re.I)
-            urls += re.findall(r'https?://[^\s"\'<>]{3,}', response.text)
-            urls = list(dict.fromkeys(urls))  # dedup, keep order
-            # Save full response body (no truncation per design guide Ch8)
-            body_path = None
-            if len(response.text) > 2000:
-                import tempfile
-                body_path = str(tempfile.mktemp(suffix=".html", dir=str(temp_dir.parent)))
-                Path(body_path).write_text(response.text, encoding="utf-8")
-            return {
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "body": response.text[:2000] + (f" [truncated, full body:{body_path}]" if body_path else ""),
-                "body_length": len(response.text),
-                "content_type": response.headers.get("content-type", ""),
-                "urls_found": urls[:30],
-                "url_count": len(urls),
-            }
+        response = await client.request(method=method, url=url, headers=headers, content=body)
+
+        # Save cookies for next call in this session
+        if cookie_file:
+            try: cookie_file.write_text(_json.dumps(dict(client.cookies)))
+            except Exception: pass
+
+        # Extract URLs from body
+        urls = re.findall(r'(?:href|src|action)=["\']([^"\']+)["\']', response.text, re.I)
+        urls += re.findall(r'https?://[^\s"\'<>]{3,}', response.text)
+        urls = list(dict.fromkeys(urls))
+
+        # Save full body to temp file if large (design guide Ch8.2)
+        body_path = None
+        if temp_dir and len(response.text) > 2000:
+            body_path = str(temp_dir / f"response_{hash(url) & 0xffff}.html")
+            Path(body_path).write_text(response.text, encoding="utf-8")
+
+        return {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "body": response.text[:2000] + (f" [truncated, full:{body_path}]" if body_path else ""),
+            "body_length": len(response.text),
+            "content_type": response.headers.get("content-type", ""),
+            "urls_found": urls[:30],
+            "url_count": len(urls),
+        }
     except httpx.TimeoutException:
         return {"error": f"请求超时 ({timeout}s)", "status_code": 0}
     except Exception as e:
         return {"error": str(e), "status_code": 0}
+    finally:
+        await client.aclose()
 
 
 async def execute_shell(tool_args: dict[str, Any], allowed_dir: Path) -> dict[str, Any]:
@@ -192,7 +209,7 @@ async def execute_tool_call(
         from src.engine.browser_tool import execute_browser_tool
         return await execute_browser_tool(session_id, temp_dir, tool_call)
     elif name == "curl_http":
-        result = await execute_curl(args)
+        result = await execute_curl(args, session_id=session_id, temp_dir=temp_dir)
     elif name == "discover_endpoints":
         result = await execute_discover(args)
     elif name == "check_auth":
