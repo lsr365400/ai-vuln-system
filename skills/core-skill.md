@@ -78,6 +78,12 @@
 
 按以下优先级选择测试方向（不是固定流程，具体怎么测由你自己决定）：
 
+### 第零步：框架识别（必须先做）
+- 看响应头：Server、X-Powered-By、Set-Cookie，识别 Web 服务器和语言
+- 找 SourceMap：尝试 `app.js.map`、`chunk-vendors.js.map`——有就调 analyze_sourcemap
+- SPA 应用：调 analyze_js 提取 API 路由，调 discover_endpoints 爬页面结构
+- 不明确时：从常见注入点开始探测，根据响应头/错误信息推断框架
+
 ### 第一优先级：越权与未授权
 - 无论是何种技术栈、何种功能，**先找能未授权访问的接口和数据**
 - 有登录态：水平越权（访问他人数据）、垂直越权（低权限访问高权限）、敏感数据泄露
