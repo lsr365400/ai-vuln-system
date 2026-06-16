@@ -76,14 +76,14 @@ async def execute_curl(tool_args: dict[str, Any], timeout: int = 30,
 
         # Save full body to temp file if large (design guide Ch8.2)
         body_path = None
-        if temp_dir and len(response.text) > 2000:
+        if temp_dir and len(response.text) > 8000:
             body_path = str(temp_dir / f"response_{hash(url) & 0xffff}.html")
             Path(body_path).write_text(response.text, encoding="utf-8")
 
         return {
             "status_code": response.status_code,
             "headers": dict(response.headers),
-            "body": response.text[:2000] + (f" [truncated, full:{body_path}]" if body_path else ""),
+            "body": response.text[:8000] + (f" [truncated, full:{body_path}]" if body_path else ""),
             "body_length": len(response.text),
             "content_type": response.headers.get("content-type", ""),
             "urls_found": urls[:30],
