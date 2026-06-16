@@ -37,8 +37,15 @@ def parse_frontmatter(text: str) -> dict:
     return meta
 
 
-def make_fingerprint(title: str, target: str) -> str:
-    return hashlib.sha256(f"{title}|{target}".encode()).hexdigest()
+def make_fingerprint(target: str, vuln_type: str, body: str) -> str:
+    """Fingerprint based on target + vulnerability type + key URL/endpoint in body.
+    Uses type instead of title — different wording of same vuln gets same fingerprint.
+    """
+    import re as _re
+    # Extract the key URL/endpoint from the report body (target field in PoC)
+    urls = _re.findall(r'(?:curl|GET|POST)\s+[\"\\\']?(https?://[^\s\"\\\'<>]+)', body)
+    key_url = urls[0][:80] if urls else target
+    return hashlib.sha256(f"{target}|{vuln_type}|{key_url}".encode()).hexdigest()
 
 
 async def index_report(db: aiosqlite.Connection, session_id: str, filepath: Path) -> Optional[dict]:
@@ -52,7 +59,7 @@ async def index_report(db: aiosqlite.Connection, session_id: str, filepath: Path
     title = meta.get("title", filepath.stem)
     target = meta.get("target", "unknown")
     vuln_type = meta.get("type", "unknown")
-    fingerprint = make_fingerprint(title, target)
+    fingerprint = make_fingerprint(target, vuln_type, text)
 
     # Check duplicate
     cursor = await db.execute("SELECT id FROM reports WHERE fingerprint = ?", (fingerprint,))

@@ -298,11 +298,15 @@ async def _run_session_with_id(
         )
         memory_store.save_progress(target_url, progress_body, session_id)
 
-        # Save findings to memory
+        # Save findings to memory (skip duplicates rejected by report indexer)
+        indexed_files = {r["filepath"] for r in indexed} if indexed else set()
         for f in sorted(report_dir.glob(f"{session_id}__*.md")):
             if f.stat().st_size >= 200:
                 text = f.read_text(encoding="utf-8")
                 title = _extract_title(text) or f.stem
+                filepath_str = str(f.resolve())
+                if indexed is not None and filepath_str not in indexed_files:
+                    continue
                 memory_store.save_finding(target_url, title, text[:2000], session_id)
 
         # Save/update target profile
