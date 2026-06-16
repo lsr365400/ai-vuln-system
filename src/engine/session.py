@@ -9,7 +9,7 @@ import aiosqlite
 
 from src.config import Settings
 from src.models import Session, SessionStatus
-from src.database import init_db, insert_session, update_session_status, insert_event_log
+from src.database import init_db, insert_session, update_session_status, insert_event_log, track_endpoint, get_tested_endpoints, get_tested_urls
 from src.engine.prompt_builder import build_system_prompt
 from src.engine.deepseek_client import DeepSeekClient
 from src.engine.tool_executor import execute_tool_call
@@ -117,6 +117,14 @@ async def _run_session_with_id(
         system_prompt += memory_header + memory_context
         logger.info("[%s] 注入了长期记忆 (%d chars)", session_id, len(memory_context))
 
+    # Inject already-tested URLs from this session
+    from urllib.parse import urlparse
+    host = urlparse(target_url).netloc or target_url
+    tested_urls = await get_tested_urls(db, host)
+    if tested_urls:
+        urls_text = "\n".join(f"- {u}" for u in tested_urls[:30])
+        system_prompt += f"\n\n## 已测试端点（本会话，不要重复测试相同路径）\n\n{urls_text}"
+
     # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
@@ -185,6 +193,14 @@ async def _run_session_with_id(
                         await insert_event_log(db, session_id, "tool_call", tc["function"]["name"])
 
                         result = await execute_tool_call(tc, temp_dir, report_dir)
+
+                        # Track endpoints for curl/discover calls
+                        if tc["function"]["name"] in ("curl_http", "discover_endpoints"):
+                            args = tc["function"].get("arguments_parsed", {})
+                            tracked_url = args.get("url", "")
+                            if tracked_url:
+                                tracked_method = args.get("method", "GET") if tc["function"]["name"] == "curl_http" else "GET"
+                                await track_endpoint(db, session_id, tracked_url, tracked_method)
 
                         assistant_msg: dict = {
                             "role": "assistant",

@@ -25,28 +25,19 @@ TOKEN_HARD_RATIO = 0.85  # 85% → force compress
 ESTIMATED_CHARS_PER_TOKEN = 2.5  # Rough heuristic for Chinese + code
 DEFAULT_CONTEXT_TOKENS = 1_000_000  # deepseek-v4-pro 1M
 
-COMPRESS_PROMPT = """你是一个会话摘要工具。请用中文将以下测试消息历史压缩为一份结构化摘要。只提取安全测试相关的关键信息：
+COMPRESS_PROMPT = """你是一个会话摘要工具。将以下安全测试消息历史压缩为结构化 JSON。只提取关键信息：
 
-1. **已完成测试**: 列出已经测试过的端点、参数、攻击类型
-2. **关键发现**: 列出所有发现（漏洞/可疑点/信息泄露），标注是否已验证
-3. **目标信息**: 技术栈、框架版本、WAF、认证机制等已确认的信息
-4. **当前状态**: 正在测试什么，下一步计划测什么
+输出严格 JSON（不要 markdown 代码块，不要其他解释）：
 
-输出格式（Markdown 片段，不要其他解释）：
-
-## 早期测试摘要
-
-### 已测试范围
-- ...
-
-### 关键发现
-- ...
-
-### 目标画像
-- ...
-
-### 当前进度
-- ...
+{
+  "tested_endpoints": ["METHOD URL — 测试了什么 (状态码)"],
+  "key_findings": ["发现描述 — 是否已验证"],
+  "target_profile": {"tech": "技术栈", "waf": "WAF名称或无", "auth": "认证方式"},
+  "credentials_found": ["凭据信息（如有）"],
+  "current_phase": "当前测试阶段",
+  "next_targets": ["下一步计划测的端点"],
+  "dead_ends": ["确认不存在漏洞的方向（跳过）"]
+}
 
 下面是需要压缩的消息历史：
 """

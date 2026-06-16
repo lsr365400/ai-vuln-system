@@ -41,6 +41,21 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "discover_endpoints",
+            "description": "爬取一个页面，提取所有链接、表单、JS脚本和疑似API路径。应在每个新发现的页面上调用，以建立目标攻击面地图。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要爬取分析的页面 URL"},
+                    "timeout": {"type": "integer", "default": 30},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "exec_shell",
             "description": "在沙箱临时目录内执行 shell 命令（仅允许 curl/wget/python/nslookup/dig 等网络测试工具）",
             "parameters": {

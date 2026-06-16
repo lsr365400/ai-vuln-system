@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import shlex
 from pathlib import Path
 from typing import Any
@@ -54,11 +55,19 @@ async def execute_curl(tool_args: dict[str, Any], timeout: int = 30) -> dict[str
                 headers=headers,
                 content=body,
             )
+            # Extract URLs from body for endpoint discovery
+            urls = re.findall(r'(?:href|src|action)=["\']([^"\']+)["\']', response.text, re.I)
+            urls += re.findall(r'https?://[^\s"\'<>]{3,}', response.text)
+            urls = list(dict.fromkeys(urls))  # dedup, keep order
             return {
                 "status_code": response.status_code,
                 "headers": dict(response.headers),
                 "body": response.text[:8000],
+                "body_preview": response.text[:500],
                 "body_length": len(response.text),
+                "content_type": response.headers.get("content-type", ""),
+                "urls_found": urls[:30],
+                "url_count": len(urls),
             }
     except httpx.TimeoutException:
         return {"error": f"请求超时 ({timeout}s)", "status_code": 0}
@@ -89,6 +98,33 @@ async def execute_shell(tool_args: dict[str, Any], allowed_dir: Path) -> dict[st
         return {"error": "命令执行超时 (30s)", "stdout": "", "stderr": "timeout"}
 
 
+async def execute_discover(tool_args: dict[str, Any]) -> dict[str, Any]:
+    """Crawl a page and discover all linked endpoints/forms/scripts."""
+    url = tool_args["url"]
+    timeout = tool_args.get("timeout", 30)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            response = await client.get(url)
+            text = response.text
+            # Extract links, forms, scripts, API-like paths
+            hrefs = re.findall(r'href=["\']([^"\']+)["\']', text, re.I)
+            actions = re.findall(r'action=["\']([^"\']+)["\']', text, re.I)
+            scripts = re.findall(r'src=["\']([^"\']+\.js[^"\']*)["\']', text, re.I)
+            api_paths = re.findall(r'["\']((?:/api/|/v\d/|/ajax/)[^"\']+)["\']', text, re.I)
+            all_links = list(dict.fromkeys(hrefs + actions + scripts + api_paths))
+            return {
+                "url": url,
+                "status_code": response.status_code,
+                "links": all_links[:50],
+                "forms": len(actions),
+                "scripts": len(scripts),
+                "api_hints": api_paths[:20],
+                "total_found": len(all_links),
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 async def execute_write_report(tool_args: dict[str, Any], report_dir: Path) -> dict[str, Any]:
     filename = tool_args["filename"]
     content = tool_args["content"]
@@ -112,6 +148,8 @@ async def execute_tool_call(
 
     if name == "curl_http":
         result = await execute_curl(args)
+    elif name == "discover_endpoints":
+        result = await execute_discover(args)
     elif name == "exec_shell":
         result = await execute_shell(args, temp_dir)
     elif name == "write_report":

@@ -41,6 +41,19 @@ CREATE TABLE IF NOT EXISTS event_log (
     payload         TEXT NOT NULL,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS tested_endpoints (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL,
+    target_url      TEXT NOT NULL,
+    method          TEXT NOT NULL DEFAULT 'GET',
+    status_code     INTEGER,
+    content_type    TEXT,
+    body_length     INTEGER,
+    url_count       INTEGER DEFAULT 0,
+    snippet         TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -143,7 +156,43 @@ async def delete_session(db: aiosqlite.Connection, session_id: str) -> bool:
     if not await cursor.fetchone():
         return False
     await db.execute("DELETE FROM event_log WHERE session_id = ?", (session_id,))
+    await db.execute("DELETE FROM tested_endpoints WHERE session_id = ?", (session_id,))
     await db.execute("DELETE FROM reports WHERE session_id = ?", (session_id,))
     await db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
     await db.commit()
     return True
+
+
+async def track_endpoint(db: aiosqlite.Connection, session_id: str, url: str,
+                         method: str = "GET", status_code: int = 0,
+                         content_type: str = "", body_length: int = 0,
+                         url_count: int = 0, snippet: str = "") -> None:
+    """Record a tested endpoint for coverage tracking."""
+    await db.execute(
+        """INSERT OR REPLACE INTO tested_endpoints
+           (session_id, target_url, method, status_code, content_type, body_length, url_count, snippet)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (session_id, url, method, status_code, content_type[:200], body_length, url_count, snippet[:300]),
+    )
+    await db.commit()
+
+
+async def get_tested_endpoints(db: aiosqlite.Connection, session_id: str) -> list[dict]:
+    """Get all tested endpoints for a session."""
+    cursor = await db.execute(
+        "SELECT target_url, method, status_code, body_length, url_count FROM tested_endpoints WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    )
+    rows = await cursor.fetchall()
+    cols = [c[0] for c in cursor.description]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+async def get_tested_urls(db: aiosqlite.Connection, target_host: str) -> list[str]:
+    """Get all unique tested URLs across sessions for a target host."""
+    cursor = await db.execute(
+        "SELECT DISTINCT target_url FROM tested_endpoints WHERE target_url LIKE ?",
+        (f"{target_host}%",),
+    )
+    rows = await cursor.fetchall()
+    return [r[0] for r in rows]
