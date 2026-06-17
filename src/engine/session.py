@@ -9,13 +9,13 @@ import aiosqlite
 
 from src.config import Settings
 from src.models import Session, SessionStatus
-from src.database import init_db, insert_session, update_session_status, insert_event_log, track_endpoint, get_tested_endpoints, get_tested_urls, track_failed_path, get_failed_paths, get_effective_techniques, record_technique, generalize_tech_stack
+from src.database import init_db, insert_session, update_session_status, insert_event_log, track_endpoint, get_tested_endpoints, get_tested_urls, track_failed_path, get_failed_paths, record_technique, generalize_tech_stack
 from src.engine.prompt_builder import build_system_prompt
 from src.engine.deepseek_client import DeepSeekClient
 from src.engine.tool_executor import execute_tool_call
 from src.engine.memory.hermes_store import HermesStore
 from src.engine.memory.compressor import should_compress, compress_messages, estimate_tokens
-from src.engine.memory.pentagi_memory import build_cross_target_context, store_vector, record_attack_chain
+from src.engine.memory.pentagi_memory import store_vector, record_attack_chain
 from src.engine.report_indexer import index_all_reports
 from src.safety.disk_guard import DiskGuard
 from src.engine.browser_tool import cleanup_context
@@ -289,6 +289,8 @@ async def _run_session_with_id(
 
     tool_names: set[str] = set()
     # Record cross-target experience (before db close)
+    from urllib.parse import urlparse
+    host = urlparse(target_url).netloc or target_url
     try:
         profile_body = _build_target_profile(target_url, session_id, messages)
         tech_sig = generalize_tech_stack(profile_body) or "未知技术栈"
@@ -356,6 +358,7 @@ async def _run_session_with_id(
 
     # Save progress snapshot
     try:
+        memory_store = HermesStore(MEMORY_DIR)
         progress_body = _build_progress_snapshot(
             target_url, scenario, turn_count, final_status,
             report_dir, session_id,
