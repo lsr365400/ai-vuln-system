@@ -325,15 +325,17 @@ async def execute_search_memory(args: dict, session_id: str = "") -> dict:
     # 2. Vector semantic search
     from src.engine.memory.pentagi_memory import search_vectors
     db_path = Path("data/db.sqlite3")
-    db = await aiosqlite.connect(str(db_path))
+    db = None
     try:
+        db = await aiosqlite.connect(str(db_path))
         similar = await search_vectors(db, query, "finding", top_k=3)
         for s in similar:
             results.append(f"[vector {s['similarity']}] {s['content'][:300]}")
     except Exception:
-        pass
+        pass  # vector search is best-effort, don't block on failure
     finally:
-        await db.close()
+        if db is not None:
+            await db.close()
 
     if not results:
         return {"query": query, "results": [], "hint": "无匹配记忆，这可能是新的攻击面"}
@@ -344,8 +346,9 @@ async def execute_check_failed_paths(args: dict) -> dict:
     """Check failed paths for a host."""
     host = args.get("host", "")
     db_path = Path("data/db.sqlite3")
-    db = await aiosqlite.connect(str(db_path))
+    db = None
     try:
+        db = await aiosqlite.connect(str(db_path))
         cursor = await db.execute(
             "SELECT technique, reason FROM failed_paths WHERE target_url LIKE ? "
             "GROUP BY technique HAVING COUNT(*) >= 2 ORDER BY COUNT(*) DESC LIMIT 10",
@@ -355,15 +358,17 @@ async def execute_check_failed_paths(args: dict) -> dict:
         failed = [{"technique": r[0], "reason": r[1]} for r in rows]
         return {"host": host, "failed_paths": failed, "total": len(failed)}
     finally:
-        await db.close()
+        if db is not None:
+            await db.close()
 
 
 async def execute_search_experience(args: dict) -> dict:
     """Search cross-target effective techniques."""
     tech_hint = args.get("tech_hint", "")
     db_path = Path("data/db.sqlite3")
-    db = await aiosqlite.connect(str(db_path))
+    db = None
     try:
+        db = await aiosqlite.connect(str(db_path))
         cursor = await db.execute(
             "SELECT tech_stack, technique, outcome, count, evidence FROM technique_effectiveness "
             "WHERE tech_stack LIKE ? AND outcome IN ('success', 'info') ORDER BY count DESC LIMIT 8",
@@ -382,7 +387,8 @@ async def execute_search_experience(args: dict) -> dict:
             })
         return {"tech_hint": tech_hint, "techniques": techniques}
     finally:
-        await db.close()
+        if db is not None:
+            await db.close()
 
 
 async def execute_tool_call(
