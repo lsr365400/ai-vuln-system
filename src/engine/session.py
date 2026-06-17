@@ -98,11 +98,9 @@ async def _run_session_with_id(
         await db.commit()
 
     # ------------------------------------------------------------------
-    # Load long-term memory and inject into system prompt
+    # Memory card — minimal summary injected into system prompt (≤300 chars)
     # ------------------------------------------------------------------
-    memory_store = HermesStore(MEMORY_DIR)
-    memory_context = memory_store.build_memory_context(target_url)
-
+    memory_card = await _build_memory_card(db, target_url)
     system_prompt = build_system_prompt(
         core_skill_path=settings.skill_file,
         target_url=target_url,
@@ -111,56 +109,12 @@ async def _run_session_with_id(
         temp_dir=temp_dir,
         report_dir=report_dir,
     )
+    if memory_card:
+        system_prompt += memory_card
+        logger.info("[%s] 记忆卡注入 (%d chars)", session_id, len(memory_card))
 
     if user_input:
         system_prompt += f"\n\n## 用户指令\n\n用户说：{user_input}\n\n根据用户指引继续测试。"
-
-    if memory_context:
-        memory_header = (
-            "\n\n## 长期记忆（来自之前的会话）\n\n"
-            "以下是对同一目标的过往测试记录。已测过的方向不要重复，已确认的漏洞不要重复报告。\n\n"
-        )
-        system_prompt += memory_header + memory_context
-        logger.info("[%s] 注入了长期记忆 (%d chars)", session_id, len(memory_context))
-
-    # Inject failed paths only (not every tested URL — too noisy)
-    from urllib.parse import urlparse
-    host = urlparse(target_url).netloc or target_url
-
-    failed = await get_failed_paths(db, host)
-    if failed:
-        failed_text = "\n".join(
-            f"- **{f['technique']}**: {f['reason']}"
-            for f in failed[:10]
-        )
-        system_prompt += (
-            "\n\n## ⛔ 已确认无效的攻击路径（优先阅读，不要重复！）\n\n"
-            + failed_text + "\n"
-        )
-
-    # Cross-target experience: query effective techniques for similar tech stacks
-    # Use basic recon hints — exact tech stack comes from the AI during testing
-    tech_hints = ["RuoYi", "SpringBoot", "SafeLine", "nginx", "Flask", "Django",
-                  "PHP", "Java", "Python", "Laravel", "ThinkPHP", "Tomcat"]
-    effective = await get_effective_techniques(db, tech_hints)
-    if effective:
-        success_lines = "\n".join(
-            f"- ✅ **{e['technique']}** → {e['outcome']} (已验证 {e['count']} 次, 技术栈: {e['tech_stack']})"
-            for e in effective[:8]
-        )
-        system_prompt += (
-            "\n\n## 🧠 跨目标经验（已验证有效的技术，优先尝试）\n\n"
-            + success_lines + "\n"
-        )
-
-    # PentAGI vector memory: semantic search for similar past findings
-    try:
-        vector_ctx = await build_cross_target_context(db, target_url)
-        if vector_ctx:
-            system_prompt += "\n\n" + vector_ctx
-            logger.info("[%s] vector memory injected", session_id)
-    except Exception as e:
-        logger.debug("[%s] vector memory skipped: %s", session_id, e)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -333,32 +287,64 @@ async def _run_session_with_id(
     except Exception as e:
         logger.warning("[%s] 报告索引失败: %s", session_id, e)
 
+    tool_names: set[str] = set()
     # Record cross-target experience (before db close)
     try:
         profile_body = _build_target_profile(target_url, session_id, messages)
-        tech_sig = generalize_tech_stack(profile_body)
-        if tech_sig:
-            acc_lower = accumulated_text.lower()
-            if any(kw in acc_lower for kw in ["safeline", "waf", "403 forbidden", "雷池"]):
-                await record_technique(db, tech_sig, "WAF detected", "blocked", "WAF")
-            if "rate limit" not in acc_lower and "captcha" not in acc_lower and "验证码" not in acc_lower:
-                if any(kw in acc_lower for kw in ["11105", "密码错误"]):
-                    await record_technique(db, tech_sig, "Login: no rate limiting", "info", "")
-            if "x-token" in acc_lower or "bearer" in acc_lower:
-                await record_technique(db, tech_sig, "Auth: token-based", "info", "")
-            if "11104" in acc_lower and "11105" in acc_lower:
-                await record_technique(db, tech_sig, "Login: user enumerable", "info", "")
-            await record_technique(db, tech_sig, f"Stack: {tech_sig}", "info", "")
-            for f in sorted(report_dir.glob(f"{session_id}__*.md")):
-                if f.stat().st_size >= 200:
-                    text = f.read_text(encoding="utf-8")
-                    title = _extract_title(text) or f.stem
-                    await record_technique(db, tech_sig, f"Found: {title}", "success", text[:300])
-            failed = await get_failed_paths(db, host)
-            for f in failed[:3]:
-                await record_technique(db, tech_sig, f"Block: {f['reason']}", "blocked", "")
+        tech_sig = generalize_tech_stack(profile_body) or "未知技术栈"
+        acc_lower = accumulated_text.lower()
+        if any(kw in acc_lower for kw in ["safeline", "waf", "403 forbidden", "雷池"]):
+            await record_technique(db, tech_sig, "WAF detected", "blocked", "WAF")
+        if "rate limit" not in acc_lower and "captcha" not in acc_lower and "验证码" not in acc_lower:
+            if any(kw in acc_lower for kw in ["11105", "密码错误"]):
+                await record_technique(db, tech_sig, "Login: no rate limiting", "info", "")
+        if "x-token" in acc_lower or "bearer" in acc_lower:
+            await record_technique(db, tech_sig, "Auth: token-based", "info", "")
+        if "11104" in acc_lower and "11105" in acc_lower:
+            await record_technique(db, tech_sig, "Login: user enumerable", "info", "")
+        await record_technique(db, tech_sig, f"Stack: {tech_sig}", "info", "")
+        for f in sorted(report_dir.glob(f"{session_id}__*.md")):
+            if f.stat().st_size >= 200:
+                text = f.read_text(encoding="utf-8")
+                title = _extract_title(text) or f.stem
+                await record_technique(db, tech_sig, f"Found: {title}", "success", text[:300])
+        # Record source discovery as learning — check ACTUAL tool calls, not text mentions
+        cursor = await db.execute(
+            "SELECT payload FROM event_log WHERE session_id=? AND event_type='tool_call'",
+            (session_id,)
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            tool_names.add(row[0])
+        if "analyze_sourcemap" in tool_names:
+            await record_technique(db, tech_sig, "SourceMap: found and analyzed", "info",
+                "SourceMap tool was actually called")
+        if "hzy@" in acc_lower or "默认密码" in acc_lower:
+            await record_technique(db, tech_sig, "JS: hardcoded credentials found", "success",
+                "Hardcoded credentials extracted from JS bundle")
+        if "11105" in acc_lower or "11104" in acc_lower:
+            await record_technique(db, tech_sig, "Login: response code differentiation", "info",
+                "Login API returns distinct codes for user exists vs not")
+        failed = await get_failed_paths(db, host)
+        for f in failed[:3]:
+            await record_technique(db, tech_sig, f"Block: {f['reason']}", "blocked", "")
     except Exception as e:
-        logger.debug("technique recording: %s", e)
+        logger.warning("[%s] technique recording failed: %s", session_id, e)
+
+    # ------------------------------------------------------------------
+    # PentAGI vector memory (must run BEFORE db.close())
+    # ------------------------------------------------------------------
+    try:
+        profile_body = _build_target_profile(target_url, session_id, messages)
+        for f in sorted(report_dir.glob(f"{session_id}__*.md")):
+            if f.stat().st_size >= 200:
+                text = f.read_text(encoding="utf-8")
+                title = _extract_title(text) or f.stem
+                tech_sig = generalize_tech_stack(profile_body) or "未知技术栈"
+                await store_vector(db, f"漏洞: {title}\n技术栈: {tech_sig}\n{text[:500]}", "finding")
+                await record_attack_chain(db, session_id, "recon", "发现", title)
+    except Exception as e:
+        logger.debug("[%s] vector memory: %s", session_id, e)
 
     await db.close()
 
@@ -373,6 +359,7 @@ async def _run_session_with_id(
         progress_body = _build_progress_snapshot(
             target_url, scenario, turn_count, final_status,
             report_dir, session_id,
+            accumulated_text, tool_names,
         )
         memory_store.save_progress(target_url, progress_body, session_id)
 
@@ -390,18 +377,6 @@ async def _run_session_with_id(
         # Save/update target profile
         profile_body = _build_target_profile(target_url, session_id, messages)
         memory_store.save_target_profile(target_url, profile_body, session_id)
-
-        # PentAGI vector memory: store findings as embeddings
-        for f in sorted(report_dir.glob(f"{session_id}__*.md")):
-            if f.stat().st_size >= 200:
-                text = f.read_text(encoding="utf-8")
-                title = _extract_title(text) or f.stem
-                tech_sig = generalize_tech_stack(profile_body)
-                try:
-                    await store_vector(db, f"漏洞: {title}\n技术栈: {tech_sig}\n{text[:500]}", "finding")
-                    await record_attack_chain(db, session_id, "recon", "发现", title)
-                except Exception:
-                    pass
 
         logger.info("[%s] 记忆已保存到 %s", session_id, MEMORY_DIR)
     except Exception as e:
@@ -456,9 +431,88 @@ def _extract_title(report_text: str) -> str:
     return ""
 
 
+async def _build_memory_card(db, target_url: str) -> str:
+    """Build a ≤300 char memory summary card for system prompt injection."""
+    from urllib.parse import urlparse
+    from pathlib import Path
+
+    host = urlparse(target_url).netloc or target_url
+
+    # 1. Tech stack from technique_effectiveness
+    cursor = await db.execute(
+        "SELECT tech_stack FROM technique_effectiveness WHERE tech_stack != '未知技术栈' "
+        "AND tech_stack != '' ORDER BY updated_at DESC LIMIT 1"
+    )
+    row = await cursor.fetchone()
+    tech_stack = row[0] if row else "未探测"
+
+    # 2. Past findings from reports table
+    cursor = await db.execute(
+        "SELECT DISTINCT title FROM reports WHERE target LIKE ? ORDER BY created_at DESC LIMIT 6",
+        (f"%{host}%",),
+    )
+    finding_rows = await cursor.fetchall()
+    findings = [r[0][:30] for r in finding_rows]
+
+    # 3. WAF detection
+    cursor = await db.execute(
+        "SELECT evidence FROM technique_effectiveness WHERE technique='WAF detected' AND tech_stack LIKE ? LIMIT 1",
+        (f"%{host}%",),
+    )
+    waf_row = await cursor.fetchone()
+
+    # 4. Last session status
+    cursor = await db.execute(
+        "SELECT status, error_msg FROM sessions WHERE target_url LIKE ? AND id != ? ORDER BY created_at DESC LIMIT 1",
+        (f"%{host}%", "",),  # empty id to not filter current session
+    )
+    last_row = await cursor.fetchone()
+    last_status = last_row[0] if last_row else "首测"
+
+    # 5. Skipped steps from progress
+    skipped_text = ""
+    try:
+        from src.engine.memory.hermes_store import HermesStore
+        store = HermesStore(Path("data/memory"))
+        slug = None
+        for entry_line in store.get_index_entries():
+            if host.replace(":", "-").replace(".", "-")[:20] in entry_line.replace(" ", "-"):
+                try:
+                    slug = entry_line.split("](")[1].split(")")[0].replace(".md", "")
+                    break
+                except Exception:
+                    pass
+        if slug:
+            progress = store.load(slug)
+            if progress and "未完成的步骤" in progress.body:
+                lines = progress.body.split("未完成的步骤")[1].strip().split("\n")
+                skipped = [l.strip("- ").strip() for l in lines if l.strip().startswith("-")]
+                if skipped:
+                    skipped_text = " | 待补: " + ", ".join(s[:25] for s in skipped[:3])
+    except Exception:
+        pass
+
+    lines = [
+        "## 目标记忆卡",
+        f"- URL: {target_url}",
+        f"- 技术栈: {tech_stack}",
+    ]
+    if findings:
+        lines.append(f"- 已发现 ({len(findings)}): {', '.join(findings[:4])}")
+    if skipped_text:
+        lines.append(f"- {skipped_text.strip(' |')}")
+    lines.append(f"- 上次终态: {last_status}")
+    if waf_row:
+        lines.append(f"- WAF: {waf_row[0][:50]}")
+
+    card = "\n".join(lines)
+    return f"\n\n{card}\n\n> 详细记忆通过 search_memory / check_failed_paths / search_experience 工具按需查询，不要在 prompt 里占用上下文。\n"
+
+
 def _build_progress_snapshot(
     target_url: str, scenario: str, turns: int,
     final_status: str, report_dir: Path, session_id: str,
+    accumulated_text: str = "", tool_names: set[str] | None = None,
 ) -> str:
     """Build a progress snapshot body for memory storage."""
     reports = list(report_dir.glob(f"{session_id}__*.md"))
@@ -470,17 +524,28 @@ def _build_progress_snapshot(
             if title:
                 report_titles.append(f"- {title}")
 
-    return f"""## 测试进度快照
+    # Detect planned-but-skipped steps
+    skipped = []
+    acc_lower = accumulated_text.lower()
+    if tool_names is None:
+        tool_names = set()
+    if ("sourcemap" in acc_lower or "SourceMap" in accumulated_text) and "analyze_sourcemap" not in tool_names:
+        skipped.append("SourceMap 分析 — 计划了但未执行")
+    if "analyze_js" in acc_lower and "analyze_js" not in tool_names:
+        skipped.append("JS 分析 — 提到但未调用工具")
+
+    base = f"""## 测试进度快照
 
 - **目标**: {target_url}
 - **场景**: {scenario}
 - **完成轮次**: {turns}
 - **终态**: {final_status}
-- **报告数**: {len(report_titles)}
-
-### 本会话发现
-{chr(10).join(report_titles) if report_titles else '(无)'}
-"""
+- **报告数**: {len(report_titles)}"""
+    if report_titles:
+        base += "\n\n### 本会话发现\n" + "\n".join(report_titles)
+    if skipped:
+        base += "\n\n### 未完成的步骤\n" + "\n".join("- " + s for s in skipped)
+    return base
 
 
 def _build_target_profile(
@@ -490,10 +555,11 @@ def _build_target_profile(
     # Extract key info from tool results in messages
     tech_hints = []
     auth_info = []
-    for m in messages[-50:]:  # Look at last 50 messages for tech info
+    for m in messages[-100:]:  # Look at last 100 messages for tech info
         content = str(m.get("content", ""))
         for keyword in ["PHP", "Apache", "nginx", "Flask", "Spring", "Django",
-                         "Python", "Java", "Tomcat", "Node.js", "IIS"]:
+                         "Python", "Java", "Tomcat", "Node.js", "IIS", "ASP.NET",
+                         "Vue", "React", "MySQL", "MongoDB", "Redis", "Express"]:
             if keyword.lower() in content.lower():
                 tech_hints.append(keyword)
         for keyword in ["PHPSESSID", "JSESSIONID", "session", "Authorization",
