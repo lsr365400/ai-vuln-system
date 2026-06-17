@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import aiosqlite
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,9 @@ async def execute_curl(tool_args: dict[str, Any], timeout: int = 30,
     url = tool_args["url"]
     method = tool_args.get("method", "GET").upper()
     headers = tool_args.get("headers", {})
+    # WAF/IDS often block python-httpx default UA — use browser UA instead
+    if "User-Agent" not in headers and "user-agent" not in headers:
+        headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     body = tool_args.get("body")
 
     # Use persistent cookie jar per session (cookies survive across curl calls)
@@ -117,7 +121,8 @@ async def execute_discover(tool_args: dict[str, Any]) -> dict[str, Any]:
     url = tool_args["url"]
     timeout = tool_args.get("timeout", 30)
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"}
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
             response = await client.get(url)
             text = response.text
             # Extract links, forms, scripts, API-like paths
@@ -146,6 +151,7 @@ async def execute_check_auth(tool_args: dict[str, Any]) -> dict[str, Any]:
     test_path = tool_args.get("test_path", "/index.php")
     try:
         headers = {"Cookie": cookies} if cookies else {}
+        headers.setdefault("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
         async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
             response = await client.get(f"{target.rstrip('/')}{test_path}", headers=headers)
             redirected = response.status_code in (301, 302, 303, 307, 308)
@@ -179,11 +185,12 @@ async def execute_analyze_js(tool_args: dict[str, Any], temp_dir: Path) -> dict[
     """Download a JS file and analyze it with jsluice for routes, secrets, and endpoints."""
     url = tool_args["url"]
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"}
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as client:
             response = await client.get(url)
             js_content = response.text
             if response.status_code != 200 or not js_content.strip():
-                return {"error": f"JS 文件获取失败 (status={response.status_code})"}
+                return {"error": f"JS 文件获取失败 (status={response.status_code}) — try with Referer: <target>"}
 
             js_file = temp_dir / "analyze_target.js"
             js_file.write_text(js_content, encoding="utf-8")
@@ -261,10 +268,11 @@ async def execute_sourcemap_parse(tool_args: dict[str, Any], temp_dir: Path) -> 
     url = tool_args["url"]
     filter_keyword = tool_args.get("filter", "")
     try:
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"}
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True, headers=headers) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
-                return {"error": f"Download failed ({resp.status_code})"}
+                return {"error": f"Download failed ({resp.status_code}) — try curl_http with browser User-Agent or browser_navigate"}
             map_file = temp_dir / "source.map"
             map_file.write_bytes(resp.content)
 
@@ -301,6 +309,82 @@ async def execute_write_report(tool_args: dict[str, Any], report_dir: Path) -> d
     return {"file_path": str(filepath), "size": len(content)}
 
 
+async def execute_search_memory(args: dict, session_id: str = "") -> dict:
+    """Search Hermes memory + vector memory for a query."""
+    query = args.get("query", "")
+    target_url = args.get("target_url", "")
+    results = []
+
+    # 1. Hermes file search by keyword
+    from src.engine.memory.hermes_store import HermesStore
+    store = HermesStore(Path("data/memory"))
+    for entry_line in store.get_index_entries():
+        if query.lower() in entry_line.lower():
+            results.append(f"[file] {entry_line}")
+
+    # 2. Vector semantic search
+    from src.engine.memory.pentagi_memory import search_vectors
+    db_path = Path("data/db.sqlite3")
+    db = await aiosqlite.connect(str(db_path))
+    try:
+        similar = await search_vectors(db, query, "finding", top_k=3)
+        for s in similar:
+            results.append(f"[vector {s['similarity']}] {s['content'][:300]}")
+    except Exception:
+        pass
+    finally:
+        await db.close()
+
+    if not results:
+        return {"query": query, "results": [], "hint": "无匹配记忆，这可能是新的攻击面"}
+    return {"query": query, "results": results[:5]}
+
+
+async def execute_check_failed_paths(args: dict) -> dict:
+    """Check failed paths for a host."""
+    host = args.get("host", "")
+    db_path = Path("data/db.sqlite3")
+    db = await aiosqlite.connect(str(db_path))
+    try:
+        cursor = await db.execute(
+            "SELECT technique, reason FROM failed_paths WHERE target_url LIKE ? "
+            "GROUP BY technique HAVING COUNT(*) >= 2 ORDER BY COUNT(*) DESC LIMIT 10",
+            (f"%{host}%",),
+        )
+        rows = await cursor.fetchall()
+        failed = [{"technique": r[0], "reason": r[1]} for r in rows]
+        return {"host": host, "failed_paths": failed, "total": len(failed)}
+    finally:
+        await db.close()
+
+
+async def execute_search_experience(args: dict) -> dict:
+    """Search cross-target effective techniques."""
+    tech_hint = args.get("tech_hint", "")
+    db_path = Path("data/db.sqlite3")
+    db = await aiosqlite.connect(str(db_path))
+    try:
+        cursor = await db.execute(
+            "SELECT tech_stack, technique, outcome, count, evidence FROM technique_effectiveness "
+            "WHERE tech_stack LIKE ? AND outcome IN ('success', 'info') ORDER BY count DESC LIMIT 8",
+            (f"%{tech_hint}%",),
+        )
+        rows = await cursor.fetchall()
+        cols = [c[0] for c in cursor.description]
+        techniques = []
+        for r in rows:
+            d = dict(zip(cols, r))
+            techniques.append({
+                "tech_stack": d["tech_stack"],
+                "technique": d["technique"],
+                "outcome": d["outcome"],
+                "count": d["count"],
+            })
+        return {"tech_hint": tech_hint, "techniques": techniques}
+    finally:
+        await db.close()
+
+
 async def execute_tool_call(
     tool_call: dict,
     temp_dir: Path,
@@ -327,6 +411,12 @@ async def execute_tool_call(
         result = await execute_analyze_js(args, temp_dir)
     elif name == "brute_force":
         result = await execute_brute_force(args, temp_dir)
+    elif name == "search_memory":
+        result = await execute_search_memory(args, session_id)
+    elif name == "check_failed_paths":
+        result = await execute_check_failed_paths(args)
+    elif name == "search_experience":
+        result = await execute_search_experience(args)
     elif name == "analyze_sourcemap":
         result = await execute_sourcemap_parse(args, temp_dir)
     elif name == "finish_session":
