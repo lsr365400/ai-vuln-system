@@ -1,0 +1,357 @@
+# src/engine/deepseek_client.py
+import json
+import logging
+from typing import AsyncIterator
+
+from openai import AsyncOpenAI
+
+from src.config import Settings
+
+logger = logging.getLogger(__name__)
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_navigate",
+            "description": "用真实浏览器打开页面（自动维护 Cookie/Session）。返回渲染后 HTML、链接、表单。登录页面用这个不是 curl_http。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "页面 URL"},
+                    "timeout": {"type": "integer", "default": 30000},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_login",
+            "description": "浏览器填写登录表单并提交，自动验证登录状态。Cookie 自动维护。返回确认的登录结果。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "登录页面 URL"},
+                    "username": {"type": "string", "description": "用户名"},
+                    "password": {"type": "string", "description": "密码"},
+                    "username_field": {"type": "string", "default": "input[name=username]", "description": "用户名字段选择器"},
+                    "password_field": {"type": "string", "default": "input[name=password]", "description": "密码字段选择器"},
+                    "submit_button": {"type": "string", "default": "input[type=submit], button[type=submit]", "description": "提交按钮选择器"},
+                    "timeout": {"type": "integer", "default": 30000},
+                },
+                "required": ["url", "username", "password"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_extract",
+            "description": "从页面提取内容：CSS 选择器、全文 HTML、包含特定文本的元素。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "可选，页面 URL"},
+                    "selector": {"type": "string", "description": "CSS 选择器"},
+                    "get_html": {"type": "boolean", "default": False, "description": "返回完整 HTML"},
+                    "contains": {"type": "string", "description": "搜索包含此文本的元素"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "curl_http",
+            "description": "发送 HTTP 请求（支持 GET/POST/PUT/DELETE），返回响应头和响应体",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "完整 URL"},
+                    "method": {
+                        "type": "string",
+                        "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+                        "default": "GET",
+                    },
+                    "headers": {
+                        "type": "object",
+                        "description": 'HTTP 请求头，如 {"Cookie": "session=xxx"}',
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "请求体（POST/PUT 时使用）",
+                    },
+                    "timeout": {"type": "integer", "default": 30},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "discover_endpoints",
+            "description": "爬取一个页面，提取所有链接、表单、JS脚本和疑似API路径。应在每个新发现的页面上调用，以建立目标攻击面地图。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要爬取分析的页面 URL"},
+                    "timeout": {"type": "integer", "default": 30},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_auth",
+            "description": "验证当前 session/cookie 是否已登录。登录后必须调用此工具确认，不要凭 HTML 内容手工判断。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_base": {"type": "string", "description": "目标基础 URL，如 http://example.com"},
+                    "cookies": {"type": "string", "description": "Cookie 字符串，如 PHPSESSID=xxx; security=low"},
+                    "test_path": {"type": "string", "default": "/index.php", "description": "用于验证登录状态的受保护路径"},
+                },
+                "required": ["target_base", "cookies"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_js",
+            "description": "下载一个 JavaScript 文件并用 jsluice 分析：提取所有 URL、API 路径、路由、密钥、token、Firebase 配置。拿到 JS 文件就先用这个工具分析，再手动读代码。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "JS 文件的完整 URL"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "brute_force",
+            "description": "用 ffuf 对登录接口进行密码爆破。默认字典 top100.txt (39个高命中默认密码)。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "登录接口 URL"},
+                    "username": {"type": "string", "default": "admin", "description": "用户名"},
+                    "password_field": {"type": "string", "default": "password", "description": "密码字段名"},
+                    "username_field": {"type": "string", "default": "username", "description": "用户名字段名"},
+                    "wordlist": {"type": "string", "default": "/usr/share/wordlists/rockyou.txt", "description": "字典文件路径"},
+                    "success_keyword": {"type": "string", "default": "login_success", "description": "登录成功的响应关键词"},
+                    "success_code": {"type": "integer", "default": 302, "description": "登录成功的 HTTP 状态码"},
+                    "max_words": {"type": "integer", "default": 200, "description": "响应最大字数限制"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_sourcemap",
+            "description": "下载并解析 .js.map SourceMap 文件，提取所有原始源代码文件路径、API 路由、认证逻辑。发现 .map 文件立即调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "SourceMap URL，如 /static/js/app.js.map"},
+                    "filter": {"type": "string", "default": "", "description": "可选，只显示路径包含此关键字的文件（如 api/router/auth）"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "exec_shell",
+            "description": "在沙箱临时目录执行命令（支持管道、脚本、批量枚举。危险性由系统拦截层保障，放心使用）",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "要执行的 shell 命令"},
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_report",
+            "description": "发现漏洞时，将漏洞报告写入文件。调用前必须逐条通过七问验证门（不能因为'发现了一些东西'就批量出报告）。严禁报告：CORS配置、用户名/邮箱枚举、P3及以下、Self-XSS、HTTP安全头缺失。如果你已经写了一份报告，写下一份之前必须重新过七问门。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "报告文件名，如 session-id__sqli-login.md"},
+                    "content": {"type": "string", "description": "Markdown 格式的完整漏洞报告"},
+                },
+                "required": ["filename", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_memory",
+            "description": "搜索历史记忆。查目标信息、历史发现、测试进度。关键词搜索 Hermes 文件记忆 + 向量语义搜索。用于了解'这个目标之前发现了什么'、'某个漏洞的细节是什么'。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词，如 'SQL注入'、'默认密码'、'用户管理'"},
+                    "target_url": {"type": "string", "description": "可选，限定目标 URL 前缀"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_failed_paths",
+            "description": "查询已确认无效的攻击路径。在尝试某个方向前先查这个，避免重复踩坑。返回该目标上之前会话中标记为无效/被拦截的测试方向及原因。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "host": {"type": "string", "description": "目标主机，如 '123.166.156.130:8888'"},
+                },
+                "required": ["host"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_experience",
+            "description": "查询跨目标经验。按技术栈关键词搜索已验证有效的攻击技术。用于了解'针对这种技术栈，什么方法有效'。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tech_hint": {"type": "string", "description": "技术栈关键词，如 'ThinkPHP'、'SpringBoot'、'SafeLine'"},
+                },
+                "required": ["tech_hint"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finish_session",
+            "description": "结束当前测试会话",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["VULN_FOUND", "LOW_ROI", "NEED_INPUT"],
+                        "description": "会话终止状态",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "测试总结（发现的漏洞/测试过但未发现的方向）",
+                    },
+                },
+                "required": ["status", "summary"],
+            },
+        },
+    },
+]
+
+
+class DeepSeekClient:
+    def __init__(self, settings: Settings):
+        self.client = AsyncOpenAI(
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_base_url,
+        )
+        self.model = settings.deepseek_model
+
+    async def chat_stream(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[dict]:
+        full_messages = [
+            {"role": "system", "content": system_prompt},
+            *messages,
+        ]
+
+        stream = await self.client.chat.completions.create(
+            model=self.model,
+            messages=full_messages,
+            tools=TOOLS,
+            tool_choice="auto",
+            max_tokens=max_tokens,
+            stream=True,
+        )
+
+        tool_call_buffer: dict[int, dict] = {}
+        reasoning_buffer = ""  # Accumulate reasoning_content from chunks
+        finish_reason = None
+
+        async for chunk in stream:
+            delta = chunk.choices[0].delta
+            finish_reason = chunk.choices[0].finish_reason
+
+            # Yield reasoning_content as text (DeepSeek thinking mode — this is the visible output)
+            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                reasoning_buffer += delta.reasoning_content
+                yield {"type": "text", "content": delta.reasoning_content}
+
+            if delta.content:
+                yield {"type": "text", "content": delta.content}
+
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tool_call_buffer:
+                        tool_call_buffer[idx] = {
+                            "id": tc.id or "",
+                            "function": {"name": "", "arguments": ""},
+                        }
+                    if tc.id:
+                        tool_call_buffer[idx]["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name:
+                            tool_call_buffer[idx]["function"]["name"] = tc.function.name
+                        if tc.function.arguments:
+                            tool_call_buffer[idx]["function"]["arguments"] += tc.function.arguments
+
+        if finish_reason == "tool_calls" and tool_call_buffer:
+            for tc in tool_call_buffer.values():
+                try:
+                    tc["function"]["arguments_parsed"] = json.loads(tc["function"]["arguments"])
+                except json.JSONDecodeError:
+                    tc["function"]["arguments_parsed"] = {}
+                # Attach reasoning_content to tool_call for DeepSeek thinking mode
+                yield {
+                    "type": "tool_call",
+                    "tool_call": tc,
+                    "reasoning_content": reasoning_buffer,
+                }
+
+        if finish_reason == "stop":
+            yield {"type": "finish", "reason": "stop", "reasoning_content": reasoning_buffer}
+
+    async def health_check(self) -> bool:
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=5,
+                stream=False,
+            )
+            return response.choices[0].message.content is not None
+        except Exception:
+            return False
