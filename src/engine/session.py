@@ -100,7 +100,7 @@ async def _run_session_with_id(
     # ------------------------------------------------------------------
     # Memory card — minimal summary injected into system prompt (≤300 chars)
     # ------------------------------------------------------------------
-    memory_card = await _build_memory_card(db, target_url)
+    memory_card = await _build_memory_card(db, target_url, session_id)
     system_prompt = build_system_prompt(
         core_skill_path=settings.skill_file,
         target_url=target_url,
@@ -434,20 +434,34 @@ def _extract_title(report_text: str) -> str:
     return ""
 
 
-async def _build_memory_card(db, target_url: str) -> str:
+async def _build_memory_card(db, target_url: str, session_id: str = "") -> str:
     """Build a ≤300 char memory summary card for system prompt injection."""
     from urllib.parse import urlparse
     from pathlib import Path
 
     host = urlparse(target_url).netloc or target_url
 
-    # 1. Tech stack from technique_effectiveness
+    # 1. Tech stack — check findings first for framework names, then fall back to technique_effectiveness
+    FRAMEWORK_KEYWORDS = [
+        "ThinkPHP", "Laravel", "Spring", "Django", "Flask", "RuoYi", "若依",
+        "Tomcat", "Nginx", "Apache", "IIS", "Node.js", "Express", "FastAPI",
+        "Vue", "React", "jQuery", "PHP", "Java", "Python", "Go", "MySQL"
+    ]
     cursor = await db.execute(
-        "SELECT tech_stack FROM technique_effectiveness WHERE tech_stack != '未知技术栈' "
-        "AND tech_stack != '' ORDER BY updated_at DESC LIMIT 1"
+        "SELECT title FROM reports WHERE target LIKE ? ORDER BY created_at DESC LIMIT 10",
+        (f"%{host}%",),
     )
-    row = await cursor.fetchone()
-    tech_stack = row[0] if row else "未探测"
+    report_titles = " ".join(r[0] for r in await cursor.fetchall())
+    matched = [kw for kw in FRAMEWORK_KEYWORDS if kw.lower() in report_titles.lower()]
+    if matched:
+        tech_stack = "/".join(dict.fromkeys(matched[:4]))
+    else:
+        cursor = await db.execute(
+            "SELECT tech_stack FROM technique_effectiveness WHERE technique LIKE 'Stack:%' "
+            "ORDER BY updated_at DESC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        tech_stack = row[0] if row else "未探测"
 
     # 2. Past findings from reports table
     cursor = await db.execute(
@@ -464,10 +478,11 @@ async def _build_memory_card(db, target_url: str) -> str:
     )
     waf_row = await cursor.fetchone()
 
-    # 4. Last session status
+    # 4. Last session status (exclude current session)
     cursor = await db.execute(
-        "SELECT status, error_msg FROM sessions WHERE target_url LIKE ? AND id != ? ORDER BY created_at DESC LIMIT 1",
-        (f"%{host}%", "",),  # empty id to not filter current session
+        "SELECT status, error_msg FROM sessions WHERE target_url LIKE ? AND id != ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (f"%{host}%", session_id),
     )
     last_row = await cursor.fetchone()
     last_status = last_row[0] if last_row else "首测"
