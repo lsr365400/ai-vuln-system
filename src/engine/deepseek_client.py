@@ -203,6 +203,49 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "search_memory",
+            "description": "搜索历史记忆。查目标信息、历史发现、测试进度。关键词搜索 Hermes 文件记忆 + 向量语义搜索。用于了解'这个目标之前发现了什么'、'某个漏洞的细节是什么'。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词，如 'SQL注入'、'默认密码'、'用户管理'"},
+                    "target_url": {"type": "string", "description": "可选，限定目标 URL 前缀"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_failed_paths",
+            "description": "查询已确认无效的攻击路径。在尝试某个方向前先查这个，避免重复踩坑。返回该目标上之前会话中标记为无效/被拦截的测试方向及原因。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "host": {"type": "string", "description": "目标主机，如 '123.166.156.130:8888'"},
+                },
+                "required": ["host"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_experience",
+            "description": "查询跨目标经验。按技术栈关键词搜索已验证有效的攻击技术。用于了解'针对这种技术栈，什么方法有效'。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tech_hint": {"type": "string", "description": "技术栈关键词，如 'ThinkPHP'、'SpringBoot'、'SafeLine'"},
+                },
+                "required": ["tech_hint"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "finish_session",
             "description": "结束当前测试会话",
             "parameters": {
