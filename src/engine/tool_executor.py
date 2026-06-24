@@ -5,6 +5,7 @@ import re
 import shlex
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import aiosqlite
@@ -25,6 +26,16 @@ BLOCKED_PATTERNS = [
 ]
 
 
+def url_in_scope(url: str, scope_re: str) -> bool:
+    """Check if a URL is within the allowed target scope."""
+    if not scope_re:
+        return True  # No scope restriction
+    try:
+        return bool(re.match(scope_re, url))
+    except Exception:
+        return False
+
+
 def _is_command_safe(command: str, allowed_dir: Path) -> tuple[bool, str]:
     cmd_lower = command.lower()
     for pattern in BLOCKED_PATTERNS:
@@ -42,8 +53,12 @@ def _is_command_safe(command: str, allowed_dir: Path) -> tuple[bool, str]:
 
 
 async def execute_curl(tool_args: dict[str, Any], timeout: int = 30,
-                       session_id: str = "", temp_dir: Path = None) -> dict[str, Any]:
+                       session_id: str = "", temp_dir: Path = None,
+                       scope_re: str = "") -> dict[str, Any]:
     url = tool_args["url"]
+
+    if not url_in_scope(url, scope_re):
+        return {"error": f"URL {url} 不在测试范围内。允许的范围: {scope_re[:120] if scope_re else '无限制'}"}
     method = tool_args.get("method", "GET").upper()
     headers = tool_args.get("headers", {})
     # WAF/IDS often block python-httpx default UA — use browser UA instead
@@ -434,15 +449,26 @@ async def execute_save_memory(args: dict, session_id: str = "", target_url: str 
     return {"saved": True, "mem_type": mem_type, "preview": content[:120]}
 
 
+URL_TOOLS = {"curl_http", "discover_endpoints", "browser_navigate", "browser_login", "browser_extract", "analyze_js", "analyze_sourcemap"}
+
+
 async def execute_tool_call(
     tool_call: dict,
     temp_dir: Path,
     report_dir: Path,
     session_id: str = "",
     target_url: str = "",
+    scope_re: str = "",
 ) -> dict[str, Any]:
     name = tool_call["function"]["name"]
     args = tool_call["function"].get("arguments_parsed", {})
+
+    # Scope validation for tools that make HTTP requests
+    if scope_re and name in URL_TOOLS:
+        url = args.get("url", "")
+        if url and not url_in_scope(url, scope_re):
+            return {"tool_call_id": tool_call["id"], "role": "tool",
+                    "content": f"Error: {url} 不在测试范围 '{target_url}' 内。只能测试匹配此范围的域名。"}
 
     if name in ("browser_navigate", "browser_login", "browser_extract"):
         from src.engine.browser_tool import execute_browser_tool

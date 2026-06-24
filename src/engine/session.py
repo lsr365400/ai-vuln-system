@@ -10,7 +10,7 @@ import aiosqlite
 from src.config import Settings
 from src.models import Session, SessionStatus
 from src.database import init_db, insert_session, update_session_status, insert_event_log, track_endpoint, get_tested_endpoints, get_tested_urls, track_failed_path, get_failed_paths, record_technique, generalize_tech_stack
-from src.engine.prompt_builder import build_system_prompt
+from src.engine.prompt_builder import build_system_prompt, compile_target_pattern, is_cross_domain
 from src.engine.deepseek_client import DeepSeekClient
 from src.engine.tool_executor import execute_tool_call
 from src.engine.memory.hermes_store import HermesStore
@@ -117,6 +117,11 @@ async def _run_session_with_id(
     if user_input:
         system_prompt += f"\n\n## 用户指令\n\n用户说：{user_input}\n\n根据用户指引继续测试。"
 
+    # Cross-domain scope
+    scope_re = compile_target_pattern(target_url) if is_cross_domain(target_url) else ""
+    if scope_re:
+        logger.info("[%s] 跨域模式: pattern=%s", session_id, target_url)
+
     # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
@@ -193,7 +198,7 @@ async def _run_session_with_id(
                         await insert_event_log(db, session_id, "tool_call", tc["function"]["name"])
 
                         try:
-                            result = await execute_tool_call(tc, temp_dir, report_dir, session_id=session_id, target_url=target_url)
+                            result = await execute_tool_call(tc, temp_dir, report_dir, session_id=session_id, target_url=target_url, scope_re=scope_re)
                         except Exception as tool_err:
                             logger.error("[%s] Tool %s crashed: %s", session_id, tc["function"]["name"], tool_err)
                             result = {"tool_call_id": tc["id"], "role": "tool",

@@ -240,7 +240,10 @@ tr:hover td { background:var(--gray-bg); }
             <!-- ============ SESSIONS ============ -->
             <div v-if="currentTab === 'sessions'">
                 <div class="create-bar">
-                    <input v-model="newTarget" @keydown.enter="createSession" placeholder="输入目标 URL，如 https://example.edu.cn" />
+                    <div style="flex:1; display:flex; flex-direction:column; gap:3px;">
+                        <input v-model="newTarget" @keydown.enter="createSession" placeholder="输入目标 — 支持通配符: *.edu.cn 或 https://example.edu.cn 或 url1,url2" style="width:100%;" />
+                        <span style="font-size:10.5px; color:var(--text2);" v-if="newTarget.includes('*')">🌐 跨域模式: 将测试所有匹配 <b>{{ newTarget }}</b> 的域名</span>
+                    </div>
                     <select v-model="newScenario">
                         <option value="custom">custom</option>
                         <option value="edu">edu</option>
