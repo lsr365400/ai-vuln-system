@@ -197,6 +197,7 @@ async def _run_session_with_id(
                     logger.info("[%s] 压缩后重新注入速查卡 (%d chars)", session_id, len(core_skill))
 
             text_buffer = ""  # Buffer text chunks into sentences before DB write
+            made_tool_call = False
             try:
                 async for event in client.chat_stream(system_prompt, messages):
                     if event["type"] == "text":
@@ -207,6 +208,7 @@ async def _run_session_with_id(
                             event_bus.publish(session_id, {"type": "text", "content": event["content"]})
 
                     elif event["type"] == "tool_call":
+                        made_tool_call = True
                         # Flush buffered text as one event
                         if text_buffer.strip():
                             await insert_event_log(db, session_id, "text", text_buffer.strip())
