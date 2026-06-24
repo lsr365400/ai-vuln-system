@@ -116,11 +116,15 @@ async def _run_session_with_id(
 
     if user_input:
         system_prompt += f"\n\n## 用户指令\n\n用户说：{user_input}\n\n根据用户指引继续测试。"
+        messages.append({"role": "user", "content": user_input})
 
     # Cross-domain scope
     scope_re = compile_target_pattern(target_url) if is_cross_domain(target_url) else ""
     if scope_re:
         logger.info("[%s] 跨域模式: pattern=%s", session_id, target_url)
+
+    # Prompt queue for user interrupts
+    prompt_queue = _get_prompt_queue(session_id)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -154,6 +158,22 @@ async def _run_session_with_id(
 
             turn_count += 1
             logger.info(f"[{session_id}] Turn {turn_count}/{settings.session_max_turns}")
+
+            # ------------------------------------------------------------------
+            # Check for user interrupt / prompt injection
+            # ------------------------------------------------------------------
+            if prompt_queue:
+                try:
+                    user_prompt = await asyncio.wait_for(prompt_queue.get(), timeout=0.1)
+                    if user_prompt:
+                        messages.append({"role": "user", "content": f"[用户打断/指令]\n\n{user_prompt}\n\n根据以上用户指令继续。"})
+                        logger.info("[%s] 用户注入提示词 (%d chars)", session_id, len(user_prompt))
+                        if event_bus:
+                            event_bus.publish(session_id, {"type": "system", "content": f"用户指令: {user_prompt}"})
+                        # Reset need_input status if we were paused
+                        await update_session_status(db, session_id, "running")
+                except asyncio.TimeoutError:
+                    pass  # No prompt pending
 
             # ------------------------------------------------------------------
             # Periodic compression check
@@ -280,11 +300,24 @@ async def _run_session_with_id(
                 break
 
             if status_marker:
+                if status_marker == "NEED_INPUT" and prompt_queue:
+                    logger.info("[%s] AI 请求用户输入，等待中...", session_id)
+                    await update_session_status(db, session_id, "need_input")
+                    if event_bus:
+                        event_bus.publish(session_id, {"type": "system", "content": "⏸️ AI 需要你的输入——在下方输入框键入指令后发送"})
+                    status_marker = None  # Reset so we keep looping
+                    continue  # Skip break, wait for next prompt check
                 break
 
             # Also check accumulated_text for status marker
             marker_from_text = detect_status_marker(accumulated_text)
             if marker_from_text:
+                if marker_from_text == "NEED_INPUT" and prompt_queue:
+                    logger.info("[%s] AI 请求用户输入，等待中...", session_id)
+                    await update_session_status(db, session_id, "need_input")
+                    if event_bus:
+                        event_bus.publish(session_id, {"type": "system", "content": "⏸️ AI 需要你的输入——在下方输入框键入指令后发送"})
+                    continue  # Skip break, wait for next prompt check
                 status_marker = marker_from_text
                 break
 
@@ -411,6 +444,19 @@ async def _run_session_with_id(
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+def _get_prompt_queue(session_id: str) -> "asyncio.Queue | None":
+    """Get the per-session prompt queue from the app state (cross-module access)."""
+    import sys
+    for mod_name in ("src.main", "__main__"):
+        if mod_name in sys.modules:
+            mod = sys.modules[mod_name]
+            prompts = getattr(mod, "user_prompts", None)
+            if prompts is not None:
+                if session_id not in prompts:
+                    prompts[session_id] = asyncio.Queue()
+                return prompts[session_id]
+    return None
 
 def _determine_status(marker: str | None, report_dir: Path, session_id: str) -> str:
     has_report = False

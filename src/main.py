@@ -17,6 +17,7 @@ from src.api.websocket_handler import router as ws_router
 
 settings = load_settings()
 scheduler = Scheduler(max_concurrent=5, max_per_project=3)
+user_prompts: dict[str, asyncio.Queue] = {}  # session_id → queue of user prompt strings
 
 
 @asynccontextmanager
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.scheduler = scheduler
     app.state.event_bus = bus
+    app.state.user_prompts = user_prompts
     asyncio.create_task(scheduler.start())
     yield
     await app.state.db.close()

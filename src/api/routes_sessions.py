@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from pathlib import Path
 
@@ -102,6 +103,32 @@ async def stop_session_api(session_id: str, request: Request):
     # Force-stop: mark as stopped even if scheduler lost track (e.g. after restart)
     await update_session_status(request.app.state.db, session_id, "stopped")
     return {"stopped": True}
+
+
+@router.post("/{session_id}/prompt")
+async def send_prompt_to_session(session_id: str, request: Request):
+    """Inject a user prompt into a running session (interrupt)."""
+    try:
+        body = await request.json()
+        prompt = body.get("prompt", "").strip()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+
+    if not prompt:
+        return JSONResponse({"ok": False, "error": "prompt is required"}, status_code=400)
+
+    prompts = request.app.state.user_prompts
+    if session_id not in prompts:
+        prompts[session_id] = asyncio.Queue()
+    await prompts[session_id].put(prompt)
+
+    # If session was in need_input state, reset to running so scheduler picks it up
+    from src.database import get_session, update_session_status
+    session = await get_session(request.app.state.db, session_id)
+    if session and session.get("status") == "need_input":
+        await update_session_status(request.app.state.db, session_id, "running")
+
+    return {"ok": True, "session_id": session_id}
 
 
 @router.delete("/{session_id}")
