@@ -189,7 +189,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "write_report",
-            "description": "发现漏洞时，将漏洞报告写入文件。调用前必须通过七问验证门",
+            "description": "发现漏洞时，将漏洞报告写入文件。调用前必须逐条通过七问验证门（不能因为'发现了一些东西'就批量出报告）。严禁报告：CORS配置、用户名/邮箱枚举、P3及以下、Self-XSS、HTTP安全头缺失。如果你已经写了一份报告，写下一份之前必须重新过七问门。",
             "parameters": {
                 "type": "object",
                 "properties": {

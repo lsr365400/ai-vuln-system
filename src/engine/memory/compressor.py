@@ -20,8 +20,8 @@ from src.engine.deepseek_client import DeepSeekClient
 logger = logging.getLogger(__name__)
 
 # Thresholds
-TOKEN_WARN_RATIO = 0.6   # When estimated tokens reach 60% of context → compress
-TOKEN_HARD_RATIO = 0.85  # 85% → force compress
+TOKEN_WARN_RATIO = 0.3   # When estimated tokens reach 30% of context → compress
+TOKEN_HARD_RATIO = 0.5   # 50% → force compress
 ESTIMATED_CHARS_PER_TOKEN = 2.5  # Rough heuristic for Chinese + code
 DEFAULT_CONTEXT_TOKENS = 1_000_000  # deepseek-v4-pro 1M
 

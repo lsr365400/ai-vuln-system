@@ -298,18 +298,6 @@ tr:hover td { background:var(--gray-bg); }
                     </div>
                 </div>
 
-                <!-- Need input bar - shown when AI is waiting -->
-                <div v-if="(viewingSession || {}).status === 'need_input'" class="card" style="margin-bottom:16px;border-color:var(--orange);">
-                    <div class="card-body" style="padding:12px 16px;display:flex;gap:8px;">
-                        <input v-model="userInput" @keydown.enter="sendInput" placeholder="AI 需要你的指引...输入后回车发送"
-                               class="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-orange-500">
-                        <button @click="sendInput" :disabled="!userInput"
-                                style="background:var(--orange);color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">
-                            发送
-                        </button>
-                    </div>
-                </div>
-
                 <div class="card">
                     <div class="card-header">🤖 AI 实时输出</div>
                     <div class="card-body" style="padding:0;">
@@ -372,7 +360,6 @@ createApp({
         const sessionLog = ref([]);
         const logContainer = ref(null);
         const reportFilter = ref('');
-        const userInput = ref('');
 
         let dashboardWs = null, sessionWs = null;
 
@@ -425,19 +412,6 @@ createApp({
             try { await fetch('/api/sessions/'+id+'/stop', { method:'POST' }); await loadSessions(); } catch(e) {}
         }
 
-        async function sendInput() {
-            if (!userInput.value || !viewingSessionId.value) return;
-            try {
-                await fetch('/api/sessions/' + viewingSessionId.value + '/input', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: userInput.value }),
-                });
-                userInput.value = '';
-                await loadSessions();  // refresh status
-            } catch(e) { console.log('sendInput error:', e); }
-        }
-
         async function deleteSession(id) {
             if (!confirm('删除会话 ' + id + ' 及其所有日志和报告？')) return;
             try { await fetch('/api/sessions/'+id, { method:'DELETE' }); await loadSessions(); } catch(e) {}
@@ -471,7 +445,7 @@ createApp({
         onMounted(() => { loadSessions(); loadReports(); connectDashboard(); });
         onUnmounted(() => { if (dashboardWs) dashboardWs.close(); if (sessionWs) sessionWs.close(); });
 
-        return { currentTab, wsConnected, status, sessions, reports, newTarget, newScenario, viewingSession, viewingSessionId, sessionLog, logContainer, reportFilter, navItems, currentPageTitle, activeSessions, recentVulns, filteredReports, statusLabel, navigateTo, createSession, stopSession, deleteSession, sendInput, userInput, loadSessions };
+        return { currentTab, wsConnected, status, sessions, reports, newTarget, newScenario, viewingSession, sessionLog, logContainer, reportFilter, navItems, currentPageTitle, activeSessions, recentVulns, filteredReports, statusLabel, navigateTo, createSession, stopSession, deleteSession, loadSessions };
     }
 }).mount('#app');
 </script>

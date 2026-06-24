@@ -10,6 +10,8 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
 # No whitelist — safety enforced by BLOCKED_PATTERNS only
 
 BLOCKED_PATTERNS = [
@@ -45,7 +47,10 @@ async def execute_curl(tool_args: dict[str, Any], timeout: int = 30,
     headers = tool_args.get("headers", {})
     # WAF/IDS often block python-httpx default UA — use browser UA instead
     if "User-Agent" not in headers and "user-agent" not in headers:
-        headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        headers["User-Agent"] = DEFAULT_UA
+    if "Referer" not in headers and "referer" not in headers:
+        from urllib.parse import urlparse
+        headers["Referer"] = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
     body = tool_args.get("body")
 
     # Use persistent cookie jar per session (cookies survive across curl calls)
@@ -109,7 +114,7 @@ async def execute_shell(tool_args: dict[str, Any], allowed_dir: Path) -> dict[st
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
         return {
             "exit_code": proc.returncode,
-            "stdout": stdout.decode("utf-8", errors="replace")[:4000],
+            "stdout": stdout.decode("utf-8", errors="replace")[:15000],
             "stderr": stderr.decode("utf-8", errors="replace")[:2000],
         }
     except asyncio.TimeoutError:
@@ -121,7 +126,9 @@ async def execute_discover(tool_args: dict[str, Any]) -> dict[str, Any]:
     url = tool_args["url"]
     timeout = tool_args.get("timeout", 30)
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"}
+        from urllib.parse import urlparse
+        origin = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+        headers = {"User-Agent": DEFAULT_UA, "Referer": origin}
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
             response = await client.get(url)
             text = response.text
@@ -151,7 +158,7 @@ async def execute_check_auth(tool_args: dict[str, Any]) -> dict[str, Any]:
     test_path = tool_args.get("test_path", "/index.php")
     try:
         headers = {"Cookie": cookies} if cookies else {}
-        headers.setdefault("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        headers.setdefault("User-Agent", DEFAULT_UA)
         async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
             response = await client.get(f"{target.rstrip('/')}{test_path}", headers=headers)
             redirected = response.status_code in (301, 302, 303, 307, 308)
@@ -185,7 +192,9 @@ async def execute_analyze_js(tool_args: dict[str, Any], temp_dir: Path) -> dict[
     """Download a JS file and analyze it with jsluice for routes, secrets, and endpoints."""
     url = tool_args["url"]
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"}
+        from urllib.parse import urlparse
+        origin = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+        headers = {"User-Agent": DEFAULT_UA, "Referer": origin}
         async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as client:
             response = await client.get(url)
             js_content = response.text
@@ -202,14 +211,14 @@ async def execute_analyze_js(tool_args: dict[str, Any], temp_dir: Path) -> dict[
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-            urls_output = stdout.decode("utf-8", errors="replace")[:6000]
+            urls_output = stdout.decode("utf-8", errors="replace")[:30000]
 
             proc2 = await asyncio.create_subprocess_exec(
                 "jsluice", "secrets", str(js_file),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
             stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=15)
-            secrets_output = stdout2.decode("utf-8", errors="replace")[:3000]
+            secrets_output = stdout2.decode("utf-8", errors="replace")[:10000]
 
             return {
                 "file": url,
@@ -268,7 +277,9 @@ async def execute_sourcemap_parse(tool_args: dict[str, Any], temp_dir: Path) -> 
     url = tool_args["url"]
     filter_keyword = tool_args.get("filter", "")
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"}
+        from urllib.parse import urlparse
+        origin = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+        headers = {"User-Agent": DEFAULT_UA, "Referer": origin}
         async with httpx.AsyncClient(timeout=60, follow_redirects=True, headers=headers) as client:
             resp = await client.get(url)
             if resp.status_code != 200:

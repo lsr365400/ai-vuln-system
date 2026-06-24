@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 STATUS_MARKER_PREFIX = "STATUS:"
 COMPRESS_EVERY_N_TURNS = 10  # Check compression need every N turns
 MEMORY_DIR = Path("data/memory")
+MAX_TOOL_CONTENT_CHARS = 50_000  # Truncate tool results to keep context manageable
 
 
 async def create_session_dir(session_id: str, session_root: Path) -> Path:
@@ -152,7 +153,7 @@ async def _run_session_with_id(
             # ------------------------------------------------------------------
             # Periodic compression check
             # ------------------------------------------------------------------
-            if turn_count > 1 and turn_count % COMPRESS_EVERY_N_TURNS == 0:
+            if turn_count > 1:
                 need, level = should_compress(messages)
                 if need:
                     logger.info(
@@ -243,6 +244,9 @@ async def _run_session_with_id(
                         if rc:
                             assistant_msg["reasoning_content"] = rc
                         messages.append(assistant_msg)
+                        # Truncate large tool results to prevent context explosion
+                        if isinstance(result.get("content"), str) and len(result["content"]) > MAX_TOOL_CONTENT_CHARS:
+                            result["content"] = result["content"][:MAX_TOOL_CONTENT_CHARS] + f"\n\n[truncated {len(result['content']) - MAX_TOOL_CONTENT_CHARS} chars to prevent context overflow]"
                         messages.append(result)
 
                         if tc["function"]["name"] == "finish_session":
@@ -463,13 +467,43 @@ async def _build_memory_card(db, target_url: str, session_id: str = "") -> str:
         row = await cursor.fetchone()
         tech_stack = row[0] if row else "未探测"
 
-    # 2. Past findings from reports table
+    # 2. Past findings from reports table + extract key credentials from finding files
     cursor = await db.execute(
         "SELECT DISTINCT title FROM reports WHERE target LIKE ? ORDER BY created_at DESC LIMIT 6",
         (f"%{host}%",),
     )
     finding_rows = await cursor.fetchall()
     findings = [r[0][:30] for r in finding_rows]
+
+    # Extract actionable credentials from findings (passwords, tokens)
+    credentials = ""
+    try:
+        from src.engine.memory.hermes_store import HermesStore
+        store = HermesStore(Path("data/memory"))
+        # Priority-ordered keywords: most actionable first
+        cred_keywords = ["hzy@", "akid", "secret", "密码", "password", "pwd", "token"]
+        host_flat = host.replace(":", "-").replace(".", "-")
+        for entry_line in store.get_index_entries():
+            if "past_finding" not in entry_line or host_flat not in entry_line.replace(" ", "-"):
+                continue
+            try:
+                slug = entry_line.split("](")[1].split(")")[0].replace(".md", "")
+            except Exception:
+                continue
+            full = store.load(slug)
+            if not full:
+                continue
+            body_lower = full.body.lower()
+            for kw in cred_keywords:
+                idx = body_lower.find(kw.lower())
+                if idx >= 0:
+                    snippet = full.body[idx:idx+80].replace("\n", " ").strip()
+                    credentials += f"{snippet}; "
+                    break
+        if credentials:
+            credentials = " | 凭据: " + credentials[:150]
+    except Exception:
+        pass
 
     # 3. WAF detection
     cursor = await db.execute(
@@ -517,6 +551,8 @@ async def _build_memory_card(db, target_url: str, session_id: str = "") -> str:
     ]
     if findings:
         lines.append(f"- 已发现 ({len(findings)}): {', '.join(findings[:4])}")
+    if credentials:
+        lines.append(f"{credentials.strip(' |')}")
     if skipped_text:
         lines.append(f"- {skipped_text.strip(' |')}")
     lines.append(f"- 上次终态: {last_status}")
@@ -524,7 +560,9 @@ async def _build_memory_card(db, target_url: str, session_id: str = "") -> str:
         lines.append(f"- WAF: {waf_row[0][:50]}")
 
     card = "\n".join(lines)
-    return f"\n\n{card}\n\n> 详细记忆通过 search_memory / check_failed_paths / search_experience 工具按需查询，不要在 prompt 里占用上下文。\n"
+    forbidden = "## 禁止报告（不要调用 write_report）\nCORS · 用户名枚举 · 邮箱枚举 · P3及以下 · 调试模式泄露 · 安全头缺失 · 版本号暴露 · 目录索引\n"
+    tool_hint = "> 详细记忆通过 search_memory / check_failed_paths / search_experience 工具按需查询\n"
+    return f"\n\n{card}\n\n{forbidden}\n{tool_hint}"
 
 
 def _build_progress_snapshot(

@@ -1,13 +1,24 @@
+# Secrets
 .env
+
+# Data
 data/
+
+# Python
 __pycache__/
 *.pyc
-*.egg-info/
-.egg-info/
-dist/
-.pytest_cache/
-.superpowers/
-.vscode/
+.venv/
+venv/
+
+# IDE
 .idea/
+.vscode/
 *.swp
-*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+tmp/
+*.log

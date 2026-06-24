@@ -18,10 +18,17 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_API = "https://api.siliconflow.cn/v1/embeddings"
-EMBEDDING_MODEL = "BAAI/bge-large-zh-v1.5"
-EMBEDDING_API_KEY = "sk-vvgmpjrwahzahnjkohmzcfulbdsouzmayeqppzbsgcmvvnlu"
 SIMILARITY_THRESHOLD = 0.75
+
+_settings = None
+
+
+def _get_settings():
+    global _settings
+    if _settings is None:
+        from src.config import load_settings
+        _settings = load_settings()
+    return _settings
 
 _embedding_last_call = 0.0
 _embedding_min_interval = 0.5
@@ -82,11 +89,12 @@ async def _get_embedding(text: str) -> list[float]:
     elapsed = time.time() - _embedding_last_call
     if elapsed < _embedding_min_interval:
         await asyncio.sleep(_embedding_min_interval - elapsed)
+    s = _get_settings()
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
-            EMBEDDING_API,
-            headers={"Authorization": f"Bearer {EMBEDDING_API_KEY}", "Content-Type": "application/json"},
-            json={"model": EMBEDDING_MODEL, "input": text[:8000]},
+            s.embedding_api_url,
+            headers={"Authorization": f"Bearer {s.embedding_api_key}", "Content-Type": "application/json"},
+            json={"model": s.embedding_model, "input": text[:8000]},
         )
         resp.raise_for_status()
         _embedding_last_call = time.time()

@@ -246,12 +246,22 @@ def generalize_tech_stack(target_profile: str) -> str:
         (r'nginx', 'nginx'),
         (r'Apache', 'Apache'),
         (r'Tomcat', 'Tomcat'),
+        (r'IIS', 'IIS'),
+        (r'ASP\.NET', 'ASP.NET'),
         (r'PHP\s*(\d+\.?\d*)', 'PHP'),
         (r'Python\s*(\d+\.?\d*)', 'Python'),
         (r'Java', 'Java'),
         (r'jQuery', 'jQuery'),
         (r'Vue\.?js|Vue\s*(\d)', 'Vue'),
         (r'React', 'React'),
+        (r'Node\.?js', 'Node.js'),
+        (r'Express', 'Express'),
+        (r'FastAPI', 'FastAPI'),
+        (r'MySQL', 'MySQL'),
+        (r'MongoDB', 'MongoDB'),
+        (r'Redis', 'Redis'),
+        (r'Webpack', 'Webpack'),
+        (r'Cloudflare', 'Cloudflare'),
     ]
     for pattern, label in patterns:
         if re.search(pattern, target_profile, re.IGNORECASE):
