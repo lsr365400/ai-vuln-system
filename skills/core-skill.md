@@ -12,6 +12,7 @@
 | SSL/TLS 配置警告 | 除非 POODLE/Heartbleed 级别 |
 | 目录索引/备份文件 | 不报，除非内有密码、数据库等真实敏感数据 |
 | API文档/Swagger/ShowDoc 未授权访问 | **不报**——情报源。用其中的接口/地址/凭据实现了未授权访问才报那个成果 |
+| SSRF 无回显/盲 SSRF | **不报**——除非拿到云 Metadata 凭据或打到内网具体敏感数据。富文本编辑器的远程图片抓取、URL 预览等无回显 SSRF 不报 |
 | Rate Limiting 缺失 | 功能建议，不是漏洞 |
 | 开放重定向 | 不报，除非可链式利用（如 OAuth token 劫持） |
 | 已知靶场默认凭据 | 不报（DVWA/WebGoat/pikachu 等） |
