@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang='zh-CN'>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>登录 - AI 漏洞挖掘系统</title>
+<style>
+:root {
+    --bg: #f0f2f5;
+    --surface: #fff;
+    --border: #e5e7eb;
+    --text: #1f2937;
+    --text2: #6b7280;
+    --primary: #4f46e5;
+    --primary-dark: #4338ca;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --radius: 10px;
+    --shadow-lg: 0 10px 15px rgba(0,0,0,.06), 0 4px 6px rgba(0,0,0,.04);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.login-box {
+    background: var(--surface);
+    border-radius: 16px;
+    box-shadow: 0 25px 50px rgba(0,0,0,.25);
+    padding: 48px 40px;
+    width: 400px;
+    max-width: 90vw;
+}
+.login-box .logo {
+    text-align: center;
+    margin-bottom: 32px;
+}
+.login-box .logo .icon {
+    width: 56px;
+    height: 56px;
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    border-radius: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    margin-bottom: 12px;
+}
+.login-box .logo h1 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.3px;
+}
+.login-box .logo p {
+    font-size: 13px;
+    color: var(--text2);
+    margin-top: 4px;
+}
+.form-group {
+    margin-bottom: 20px;
+}
+.form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+}
+.form-group input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 14px;
+    transition: border-color .2s, box-shadow .2s;
+    outline: none;
+}
+.form-group input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(79,70,229,.12);
+}
+.btn {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+}
+.btn-primary {
+    background: linear-gradient(135deg, #4f46e5, #6366f1);
+    color: #fff;
+}
+.btn-primary:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+}
+.btn-primary:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+    transform: none;
+    filter: none;
+}
+.error {
+    background: var(--red-bg);
+    color: var(--red);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+}
+.error.show { display: block; }
+</style>
+</head>
+<body>
+
+<div class='login-box'>
+    <div class='logo'>
+        <div class='icon'>&#128737;</div>
+        <h1>AI 漏洞挖掘系统</h1>
+        <p>请输入密码以继续</p>
+    </div>
+    <div class='error' id='error'></div>
+    <form id='loginForm'>
+        <div class='form-group'>
+            <label for='password'>密码</label>
+            <input type='password' id='password' placeholder='请输入访问密码' autofocus>
+        </div>
+        <button type='submit' class='btn btn-primary' id='submitBtn'>登 录</button>
+    </form>
+</div>
+
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    const error = document.getElementById('error');
+    const password = document.getElementById('password').value;
+
+    error.classList.remove('show');
+    btn.disabled = true;
+    btn.textContent = '验证中...';
+
+    try {
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+            window.location.href = '/';
+        } else {
+            error.textContent = data.error || '登录失败';
+            error.classList.add('show');
+        }
+    } catch (err) {
+        error.textContent = '网络错误，请重试';
+        error.classList.add('show');
+    }
+
+    btn.disabled = false;
+    btn.textContent = '登 录';
+});
+</script>
+</body>
+</html>
