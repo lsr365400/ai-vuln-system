@@ -305,16 +305,13 @@ async def _run_session_with_id(
                 final_status = "error"
                 break
 
-            if status_marker:
-                if status_marker == "NEED_INPUT" and prompt_queue:
-                    logger.info("[%s] AI 请求用户输入，等待中...", session_id)
-                    await update_session_status(db, session_id, "need_input")
-                    if event_bus:
-                        event_bus.publish(session_id, {"type": "system", "content": "⏸️ AI 需要你的输入——在下方输入框键入指令后发送"})
-                    status_marker = None  # Reset so we keep looping
-                    continue  # Skip break, wait for next prompt check
+            # If AI returned stop without making any tool calls, end gracefully
+            if final_status is None and not made_tool_call and not status_marker:
+                logger.info("[%s] AI 自然结束(无工具调用)，turns=%d", session_id, turn_count)
+                final_status = _determine_status(None, report_dir, session_id)
                 break
 
+            if status_marker:
             # Also check accumulated_text for status marker
             marker_from_text = detect_status_marker(accumulated_text)
             if marker_from_text:
