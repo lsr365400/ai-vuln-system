@@ -19,6 +19,12 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Superpowers runtime
+.superpowers/
+
+# Server backups
+*.server
+
 # Temp
 tmp/
 *.log
