@@ -124,3 +124,4 @@ uvicorn src.main:app --host 0.0.0.0 --port 8080
 - 会话超时自动中止 (默认 4 小时)
 - 磁盘占用保护 (默认 5GB 上限)
 - 最大轮数限制 (默认 200 轮)
+# auto-commit test
