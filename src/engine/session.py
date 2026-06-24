@@ -162,11 +162,14 @@ async def _run_session_with_id(
                     )
                     await compress_messages(client, messages, keep_last=12)
                     logger.info("[%s] 压缩完成 (%d messages remain)", session_id, len(messages))
-                    # Re-inject fresh memory card after compression
+                    # Re-inject fresh memory card + core skill after compression
                     fresh_memory = await _build_memory_card(db, target_url, session_id)
                     if fresh_memory:
                         messages.insert(1, {"role": "user", "content": fresh_memory})
                         logger.info("[%s] 压缩后重新注入记忆卡 (%d chars)", session_id, len(fresh_memory))
+                    core_skill = settings.skill_file.read_text(encoding="utf-8")
+                    messages.insert(2, {"role": "user", "content": core_skill})
+                    logger.info("[%s] 压缩后重新注入速查卡 (%d chars)", session_id, len(core_skill))
 
             text_buffer = ""  # Buffer text chunks into sentences before DB write
             try:
