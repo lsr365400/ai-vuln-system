@@ -20,8 +20,7 @@ from src.engine.deepseek_client import DeepSeekClient
 logger = logging.getLogger(__name__)
 
 # Thresholds
-TOKEN_WARN_RATIO = 0.3   # When estimated tokens reach 30% of context → compress
-TOKEN_HARD_RATIO = 0.5   # 50% → force compress
+COMPRESS_THRESHOLD = 0.8  # 80% of context window → compress
 ESTIMATED_CHARS_PER_TOKEN = 2.5  # Rough heuristic for Chinese + code
 DEFAULT_CONTEXT_TOKENS = 1_000_000  # deepseek-v4-pro 1M
 
@@ -60,10 +59,8 @@ def estimate_tokens(messages: list[dict]) -> int:
 def should_compress(messages: list[dict], context_size: int = DEFAULT_CONTEXT_TOKENS) -> tuple[bool, str]:
     """Check whether compression is needed. Returns (should_compress, level)."""
     est = estimate_tokens(messages)
-    if est > context_size * TOKEN_HARD_RATIO:
-        return True, "hard"
-    if est > context_size * TOKEN_WARN_RATIO:
-        return True, "warn"
+    if est > context_size * COMPRESS_THRESHOLD:
+        return True, "compress"
     return False, "ok"
 
 
