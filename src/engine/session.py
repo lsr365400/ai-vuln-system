@@ -298,8 +298,7 @@ async def _run_session_with_id(
                 tb = __import__("traceback").format_exc()
                 err_type = type(e).__name__
                 err_msg = str(e) or "(empty)"
-                logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}
-{tb}")
+                logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
                 await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
                 status_marker = None
                 final_status = "error"
