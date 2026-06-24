@@ -300,7 +300,6 @@ async def _run_session_with_id(
                 err_msg = str(e) or "(empty)"
                 logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
                 await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
-                status_marker = None
                 final_status = "error"
                 break
 
@@ -311,6 +310,15 @@ async def _run_session_with_id(
                 break
 
             if status_marker:
+                if status_marker == "NEED_INPUT" and prompt_queue:
+                    logger.info("[%s] AI 请求用户输入，等待中...", session_id)
+                    await update_session_status(db, session_id, "need_input")
+                    if event_bus:
+                        event_bus.publish(session_id, {"type": "system", "content": "⏸️ AI 需要你的输入——在下方输入框键入指令后发送"})
+                    status_marker = None  # Reset so we keep looping
+                    continue  # Skip break, wait for next prompt check
+                break
+
             # Also check accumulated_text for status marker
             marker_from_text = detect_status_marker(accumulated_text)
             if marker_from_text:
@@ -337,9 +345,11 @@ async def _run_session_with_id(
             p1p2 = [r for r in indexed if r["severity"] in ("P1", "P2")]
             logger.info("[%s] 报告入库: %d 份 (P1/P2: %d)", session_id, len(indexed), len(p1p2))
     except Exception as e:
-        logger.warning("[%s] 报告索引失败: %s", session_id, e)
-
-    tool_names: set[str] = set()
+        tb = __import__("traceback").format_exc()
+        err_type = type(e).__name__
+        err_msg = str(e) or "(empty)"
+        logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
+        await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
     # Record cross-target experience (before db close)
     from urllib.parse import urlparse
     host = urlparse(target_url).netloc or target_url
@@ -383,9 +393,11 @@ async def _run_session_with_id(
         for f in failed[:3]:
             await record_technique(db, tech_sig, f"Block: {f['reason']}", "blocked", "")
     except Exception as e:
-        logger.warning("[%s] technique recording failed: %s", session_id, e)
-
-    # ------------------------------------------------------------------
+        tb = __import__("traceback").format_exc()
+        err_type = type(e).__name__
+        err_msg = str(e) or "(empty)"
+        logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
+        await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
     # PentAGI vector memory (must run BEFORE db.close())
     # ------------------------------------------------------------------
     try:
@@ -398,9 +410,11 @@ async def _run_session_with_id(
                 await store_vector(db, f"漏洞: {title}\n技术栈: {tech_sig}\n{text[:500]}", "finding")
                 await record_attack_chain(db, session_id, "recon", "发现", title)
     except Exception as e:
-        logger.debug("[%s] vector memory: %s", session_id, e)
-
-    await db.close()
+        tb = __import__("traceback").format_exc()
+        err_type = type(e).__name__
+        err_msg = str(e) or "(empty)"
+        logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
+        await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
 
     # ------------------------------------------------------------------
     # Termination + save to long-term memory
@@ -435,9 +449,11 @@ async def _run_session_with_id(
 
         logger.info("[%s] 记忆已保存到 %s", session_id, MEMORY_DIR)
     except Exception as e:
-        logger.warning("[%s] 记忆保存失败: %s", session_id, e)
-
-    try: await cleanup_context(session_id)
+        tb = __import__("traceback").format_exc()
+        err_type = type(e).__name__
+        err_msg = str(e) or "(empty)"
+        logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
+        await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
     except Exception: pass
     await _finalize_session(settings.database_path, session_id, final_status)
     return final_status
