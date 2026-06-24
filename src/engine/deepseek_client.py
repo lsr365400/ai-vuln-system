@@ -246,6 +246,26 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "save_memory",
+            "description": "将非漏洞但值得记忆的信息存入长期记忆——凭据、端点、死胡同、技术笔记。不是漏洞（漏洞用 write_report），但这些信息在后续会话中有价值：发现的密码即使暂时没用、确认不存在的漏洞方向、特殊的路由/接口、目标的技术细节。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mem_type": {
+                        "type": "string",
+                        "enum": ["credential", "endpoint", "dead_end", "tech_note"],
+                        "description": "记忆类型——credential: 发现的凭据/密码/密钥; endpoint: 值得记住的URL/路径/接口; dead_end: 确认不存在的漏洞方向(避免重复); tech_note: 目标技术细节(框架版本/配置特征)",
+                    },
+                    "content": {"type": "string", "description": "要记住的内容，尽量具体。凭据: 'admin:hzy@2003 on /login'; 端点: '/api/debug/info 返回配置'; 死胡同: 'SQL注入在id参数 — 强类型整形无注入'; 技术笔记: '若依 v4.7.5, Shiro 1.10, 无WAF'"},
+                    "target_url": {"type": "string", "description": "关联的目标 URL，用于后续按目标检索"},
+                },
+                "required": ["mem_type", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "finish_session",
             "description": "结束当前测试会话",
             "parameters": {

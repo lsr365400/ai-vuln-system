@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import re
 import shlex
@@ -402,11 +403,43 @@ async def execute_search_experience(args: dict) -> dict:
             await db.close()
 
 
+async def execute_save_memory(args: dict, session_id: str = "", target_url: str = "") -> dict:
+    """Save non-vulnerability intelligence to Hermes long-term memory."""
+    content = args.get("content", "")
+    mem_type = args.get("mem_type", "note")
+
+    if not content.strip():
+        return {"error": "content 不能为空"}
+
+    from urllib.parse import urlparse
+    from src.engine.memory.hermes_store import HermesStore, MemoryEntry
+
+    store = HermesStore(Path("data/memory"))
+    t_url = args.get("target_url", target_url)
+    host = urlparse(t_url).netloc if t_url else "unknown"
+    host_flat = host.replace(":", "-").replace(".", "-") if host != "unknown" else "unknown"
+
+    slug = hashlib.sha256(f"{mem_type}:{content}".encode()).hexdigest()[:12]
+    icon = {"credential": "🔑", "endpoint": "📍", "dead_end": "🚫", "tech_note": "📋"}.get(mem_type, "📌")
+
+    entry = MemoryEntry(
+        name=f"note-{host_flat}-{mem_type}-{slug}",
+        description=f"{icon} [{mem_type}] {host} — {content[:60]}",
+        mem_type="past_finding",
+        body=f"# [{mem_type.upper()}] {content}\n\n- 类型: {mem_type}\n- 目标: {t_url}\n- 会话: {session_id}",
+        session_id=session_id,
+    )
+    store.save(entry)
+    logger.info("save_memory: [%s] %s", mem_type, content[:100])
+    return {"saved": True, "mem_type": mem_type, "preview": content[:120]}
+
+
 async def execute_tool_call(
     tool_call: dict,
     temp_dir: Path,
     report_dir: Path,
     session_id: str = "",
+    target_url: str = "",
 ) -> dict[str, Any]:
     name = tool_call["function"]["name"]
     args = tool_call["function"].get("arguments_parsed", {})
@@ -432,6 +465,8 @@ async def execute_tool_call(
         result = await execute_search_memory(args, session_id)
     elif name == "check_failed_paths":
         result = await execute_check_failed_paths(args)
+    elif name == "save_memory":
+        result = await execute_save_memory(args, session_id, target_url)
     elif name == "search_experience":
         result = await execute_search_experience(args)
     elif name == "analyze_sourcemap":

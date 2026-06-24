@@ -179,7 +179,7 @@ async def _run_session_with_id(
                             event_bus.publish(session_id, {"type": "tool_call", "name": tc["function"]["name"]})
                         await insert_event_log(db, session_id, "tool_call", tc["function"]["name"])
 
-                        result = await execute_tool_call(tc, temp_dir, report_dir)
+                        result = await execute_tool_call(tc, temp_dir, report_dir, target_url=target_url)
 
                         assistant_msg: dict = {
                             "role": "assistant",

@@ -230,7 +230,7 @@ async def _run_session_with_id(
                         await insert_event_log(db, session_id, "tool_call", tc["function"]["name"])
 
                         try:
-                            result = await execute_tool_call(tc, temp_dir, report_dir, session_id=session_id)
+                            result = await execute_tool_call(tc, temp_dir, report_dir, session_id=session_id, target_url=target_url)
                         except Exception as tool_err:
                             logger.error("[%s] Tool %s crashed: %s", session_id, tc["function"]["name"], tool_err)
                             result = {"tool_call_id": tc["id"], "role": "tool",
