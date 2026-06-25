@@ -95,6 +95,47 @@ async def browser_navigate(session_id: str, temp_dir: Path, args: dict) -> dict:
         await page.close()
 
 
+USERNAME_SELECTORS = [
+    "input[name=username]",
+    "input[name=email]",
+    "input[type=email]",
+    "input[autocomplete=username]",
+    "input[type=text][autocomplete=email]",
+    "input[placeholder*=邮箱]",
+    "input[placeholder*=手机]",
+    "input[placeholder*=账号]",
+    "input[type=text]:not([readonly]):not([type=hidden])",
+]
+
+PASSWORD_SELECTORS = [
+    "input[name=password]",
+    "input[type=password]",
+    "input[placeholder*=密码]",
+]
+
+SUBMIT_SELECTORS = [
+    "input[type=submit]",
+    "button[type=submit]",
+    "button:has-text('登录')",
+    "button:has-text('登 录')",
+    "button:has-text('Log in')",
+    "button:has-text('Sign in')",
+    "[role=button]:has-text('登录')",
+]
+
+
+async def _try_find_selector(page, selectors: list[str], timeout: int = 3000) -> str | None:
+    """Try each selector, return the first one that matches."""
+    for sel in selectors:
+        try:
+            await page.wait_for_selector(sel, timeout=timeout, state="attached")
+            if await page.locator(sel).count() > 0:
+                return sel
+        except Exception:
+            continue
+    return None
+
+
 async def browser_login(session_id: str, temp_dir: Path, args: dict) -> dict:
     """Fill login form, submit, and verify authentication."""
     ctx = await get_context(session_id, temp_dir)
@@ -103,20 +144,52 @@ async def browser_login(session_id: str, temp_dir: Path, args: dict) -> dict:
     page = await ctx.new_page()
     try:
         # Navigate to login page
-        await page.goto(args["url"], wait_until="domcontentloaded", timeout=args.get("timeout", 20000))
+        await page.goto(args["url"], wait_until="networkidle", timeout=args.get("timeout", 20000))
         login_url = page.url
 
-        # Fill fields
-        username_field = args.get("username_field", "input[name=username]")
-        password_field = args.get("password_field", "input[name=password]")
-        await page.wait_for_selector(username_field, timeout=10000)
-        await page.fill(username_field, args["username"])
-        await page.fill(password_field, args["password"])
+        # --- Flexible username/password selector detection ---
+        custom_user = args.get("username_field")
+        custom_pass = args.get("password_field")
+        user_selectors = [custom_user] + USERNAME_SELECTORS if custom_user else USERNAME_SELECTORS
+        pass_selectors = [custom_pass] + PASSWORD_SELECTORS if custom_pass else PASSWORD_SELECTORS
+
+        username_sel = await _try_find_selector(page, user_selectors)
+        password_sel = await _try_find_selector(page, pass_selectors)
+
+        if not username_sel or not password_sel:
+            text_inputs = page.locator("input[type=text]:visible, input[type=email]:visible, input:not([type])")
+            pw_inputs = page.locator("input[type=password]:visible")
+            text_count = await text_inputs.count()
+            pw_count = await pw_inputs.count()
+            if text_count > 0 and pw_count > 0:
+                username_sel = "input[type=text]:visible, input[type=email]:visible, input:not([type])"
+                password_sel = "input[type=password]:visible"
+                await text_inputs.first.fill(args["username"])
+                await pw_inputs.first.fill(args["password"])
+            else:
+                return {
+                    "authenticated": False,
+                    "error": f"找不到登录表单字段。页面上 text 输入框 {text_count} 个，password 输入框 {pw_count} 个。请用 browser_navigate 先查看页面结构，或手动指定 username_field/password_field。",
+                    "page_title": await page.title(),
+                    "html_snippet": (await page.content())[:1000],
+                }
+
+        if username_sel and password_sel:
+            try:
+                await page.fill(username_sel, args["username"])
+            except Exception:
+                await page.locator(username_sel).first.fill(args["username"])
+            try:
+                await page.fill(password_sel, args["password"])
+            except Exception:
+                await page.locator(password_sel).first.fill(args["password"])
 
         # Click submit or press Enter
-        submit_btn = args.get("submit_button", "input[type=submit], button[type=submit]")
-        if await page.locator(submit_btn).count() > 0:
-            await page.locator(submit_btn).first.click(timeout=10000)
+        submit_btn = args.get("submit_button")
+        submit_selectors = [submit_btn] + SUBMIT_SELECTORS if submit_btn else SUBMIT_SELECTORS
+        submit_sel = await _try_find_selector(page, submit_selectors, timeout=2000)
+        if submit_sel:
+            await page.locator(submit_sel).first.click(timeout=5000)
         else:
             await page.keyboard.press("Enter")
 

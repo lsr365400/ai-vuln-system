@@ -197,6 +197,7 @@ async def _run_session_with_id(
                     logger.info("[%s] 压缩后重新注入速查卡 (%d chars)", session_id, len(core_skill))
 
             text_buffer = ""  # Buffer text chunks into sentences before DB write
+            made_tool_call = False
             try:
                 async for event in client.chat_stream(system_prompt, messages):
                     if event["type"] == "text":
@@ -207,6 +208,7 @@ async def _run_session_with_id(
                             event_bus.publish(session_id, {"type": "text", "content": event["content"]})
 
                     elif event["type"] == "tool_call":
+                        made_tool_call = True
                         # Flush buffered text as one event
                         if text_buffer.strip():
                             await insert_event_log(db, session_id, "text", text_buffer.strip())
@@ -293,10 +295,18 @@ async def _run_session_with_id(
                             text_buffer = ""
 
             except Exception as e:
-                logger.error(f"[{session_id}] API 调用失败: {e}")
-                await update_session_status(db, session_id, "error", str(e))
-                status_marker = None
+                tb = __import__("traceback").format_exc()
+                err_type = type(e).__name__
+                err_msg = str(e) or "(empty)"
+                logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
+                await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
                 final_status = "error"
+                break
+
+            # If AI returned stop without making any tool calls, end gracefully
+            if final_status is None and not made_tool_call and not status_marker:
+                logger.info("[%s] AI 自然结束(无工具调用)，turns=%d", session_id, turn_count)
+                final_status = _determine_status(None, report_dir, session_id)
                 break
 
             if status_marker:
@@ -335,9 +345,11 @@ async def _run_session_with_id(
             p1p2 = [r for r in indexed if r["severity"] in ("P1", "P2")]
             logger.info("[%s] 报告入库: %d 份 (P1/P2: %d)", session_id, len(indexed), len(p1p2))
     except Exception as e:
-        logger.warning("[%s] 报告索引失败: %s", session_id, e)
-
-    tool_names: set[str] = set()
+        tb = __import__("traceback").format_exc()
+        err_type = type(e).__name__
+        err_msg = str(e) or "(empty)"
+        logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
+        await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
     # Record cross-target experience (before db close)
     from urllib.parse import urlparse
     host = urlparse(target_url).netloc or target_url
@@ -381,9 +393,11 @@ async def _run_session_with_id(
         for f in failed[:3]:
             await record_technique(db, tech_sig, f"Block: {f['reason']}", "blocked", "")
     except Exception as e:
-        logger.warning("[%s] technique recording failed: %s", session_id, e)
-
-    # ------------------------------------------------------------------
+        tb = __import__("traceback").format_exc()
+        err_type = type(e).__name__
+        err_msg = str(e) or "(empty)"
+        logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
+        await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
     # PentAGI vector memory (must run BEFORE db.close())
     # ------------------------------------------------------------------
     try:
@@ -396,9 +410,11 @@ async def _run_session_with_id(
                 await store_vector(db, f"漏洞: {title}\n技术栈: {tech_sig}\n{text[:500]}", "finding")
                 await record_attack_chain(db, session_id, "recon", "发现", title)
     except Exception as e:
-        logger.debug("[%s] vector memory: %s", session_id, e)
-
-    await db.close()
+        tb = __import__("traceback").format_exc()
+        err_type = type(e).__name__
+        err_msg = str(e) or "(empty)"
+        logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
+        await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
 
     # ------------------------------------------------------------------
     # Termination + save to long-term memory
@@ -433,9 +449,11 @@ async def _run_session_with_id(
 
         logger.info("[%s] 记忆已保存到 %s", session_id, MEMORY_DIR)
     except Exception as e:
-        logger.warning("[%s] 记忆保存失败: %s", session_id, e)
-
-    try: await cleanup_context(session_id)
+        tb = __import__("traceback").format_exc()
+        err_type = type(e).__name__
+        err_msg = str(e) or "(empty)"
+        logger.error(f"[{session_id}] API 调用失败 ({err_type}): {err_msg}\n{tb}")
+        await update_session_status(db, session_id, "error", f"{err_type}: {err_msg}"[:500])
     except Exception: pass
     await _finalize_session(settings.database_path, session_id, final_status)
     return final_status
